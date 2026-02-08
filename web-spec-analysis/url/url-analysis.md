@@ -1128,7 +1128,8 @@ Browser interpretation:
 - OAuth token/code interception
 
 **Patch**:
-- Fixed in mod_auth_openidc version 2.4.12.2
+- CVE-2021-32786: Fixed in mod_auth_openidc version 2.4.9
+- CVE-2021-39191: Fixed in mod_auth_openidc version 2.4.9.4
 - Maintainers responded and patched within 24 hours
 
 ---

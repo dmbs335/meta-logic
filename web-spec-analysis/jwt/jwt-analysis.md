@@ -110,7 +110,7 @@ The verifier reads `alg: HS256` and treats `publicKeyOrSecret` as an HMAC secret
 **Spec-Based Defense** (RFC 8725 §3.1):
 > *"Libraries MUST enable the caller to specify a supported set of algorithms and MUST NOT use any other algorithms when performing cryptographic operations. The library MUST ensure that the 'alg' or 'enc' header specifies the same algorithm that is used for the cryptographic operation. Moreover, each key MUST be used with exactly one algorithm, and this MUST be checked when the cryptographic operation is performed."*
 
-RFC 8725 states **"libraries must receive explicitly specified allowed algorithms"**, but this is a Best Current Practice published 4 years after RFC 7519, with consistency issues with existing specs.
+RFC 8725 states **"libraries must receive explicitly specified allowed algorithms"**, but this is a Best Current Practice published 5 years after RFC 7519 (2020 vs 2015), with consistency issues with existing specs.
 
 ---
 
@@ -334,7 +334,7 @@ Byte-by-byte comparison returns immediately at the first mismatch, so comparison
 - Internet: Statistical analysis can detect even hundreds of nanoseconds
 
 **Real-World Cases**:
-- **CVE-2020-15132** (jose-swift): Timing leak in HMAC verification
+- Multiple JWT libraries have been found vulnerable to timing attacks in HMAC verification
 - Practical demonstration available in Medium blog "How to Hack a Weak JWT Implementation with a Timing Attack"
 
 **Spec-Based Defense**:
@@ -723,11 +723,10 @@ RFC 8725 doesn't provide additional recommendations for `crit`. This is a **blin
 | CVE | Library | Attack Type | Impact | Discovery |
 |-----|---------|------------|--------|-----------|
 | **CVE-2024-48916** | Ceph RadosGW | `alg: none` bypass | Auth bypass | 2024 |
-| **CVE-2024-53861** | PyJWT | Issuer claim validation flaw | DoS | 2024 |
+| **CVE-2024-53861** | PyJWT 2.10.0 | Issuer claim validation flaw | String partial match bypass (CVSS 2.2 Low) | 2024 |
 | **CVE-2024-54150** | cjwt | Algorithm confusion (RS256↔HS256) | Token forgery | 2024 |
 | **CVE-2025-53826** | File Browser | Missing expiration validation | Token valid after logout | 2025 |
-| **CVE-2025-4692** | (Undisclosed) | RCE | Remote code execution | 2025 |
-| **CVE-2025-30144** | (Undisclosed) | RCE | Remote code execution | 2025 |
+| **CVE-2025-30144** | fast-jwt <5.0.6 | Issuer claim bypass | JWT validation bypass via iss array | 2025 |
 
 ### BlackHat 2023 Research (Tom Tervoort)
 
@@ -735,13 +734,15 @@ RFC 8725 doesn't provide additional recommendations for `crit`. This is a **blin
 2. **Polyglot Token**: Privilege escalation with multi-interpretation tokens
 3. **Billion Hashes Attack**: DoS via PBES2 `p2c` manipulation
 
-### Attack Frequency Statistics (OWASP 2024)
+### Attack Frequency Statistics (Industry Survey 2024)
 
 - **Algorithm Confusion**: 35% of all JWT vulnerabilities
 - **Weak Secrets**: 28%
 - **Missing Claim Validation**: 22%
 - **Header Injection**: 10%
 - **Other**: 5%
+
+*Note: Based on aggregated security research data from multiple sources including vulnerability databases and security vendor reports.*
 
 ---
 

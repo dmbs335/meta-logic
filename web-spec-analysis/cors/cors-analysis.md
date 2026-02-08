@@ -691,14 +691,14 @@ performance.getEntriesByType('resource').forEach(entry => {
 
 ### Comprehensive CVE Analysis
 
-| CVE ID | Product | Vulnerability Type | Impact | Root Cause |
-|--------|---------|-------------------|--------|------------|
-| CVE-2024-25124 | Go Fiber v2 | Wildcard with Credentials | Unauthorized data access | Framework allowed `Access-Control-Allow-Origin: *` with `Access-Control-Allow-Credentials: true` |
-| CVE-2024-8183 | Prefect 2.20.2 | Origin Reflection | Data leak, loss of confidentiality | CORS misconfiguration allows unauthorized domains to access sensitive database data |
-| CVE-2024-1681 | Flask-CORS | Log Injection | Log corruption, forensic evasion | CRLF injection via Origin header when debug logging enabled |
-| CVE-2025-5320 | Gradio ≤5.29.1 | Origin Validation Error | Unauthorized access | `is_valid_origin` function in CORS Handler incorrectly validates localhost aliases |
-| CVE-2025-57755 | Claude Code Router | Improper CORS Config | Credential exposure | Permissive CORS configuration potentially exposes user credentials |
-| CVE-2015-4520 | Firefox | Preflight Cache Poisoning | Credential bypass | Cached preflight responses incorrectly applied to credentialed requests |
+| CVE ID | Product | CVSS Score | Vulnerability Type | Impact | Root Cause |
+|--------|---------|------------|-------------------|--------|------------|
+| CVE-2024-25124 | Go Fiber v2 | 7.5 High | Wildcard with Credentials | Unauthorized data access | Framework allowed `Access-Control-Allow-Origin: *` with `Access-Control-Allow-Credentials: true` |
+| CVE-2024-8183 | Prefect 2.20.2 | 6.5 Medium | Origin Reflection | Data leak, loss of confidentiality | CORS misconfiguration allows unauthorized domains to access sensitive database data |
+| CVE-2024-1681 | Flask-CORS | 4.3 Medium | Log Injection | Log corruption, forensic evasion | CRLF injection via Origin header when debug logging enabled |
+| CVE-2025-5320 | Gradio ≤5.29.1 | 7.4 High | Origin Validation Error | Unauthorized access | `is_valid_origin` function in CORS Handler incorrectly validates localhost aliases |
+| CVE-2025-57755 | Claude Code Router | 7.1 High | Improper CORS Config | Credential exposure | Permissive CORS configuration potentially exposes user credentials |
+| CVE-2015-4520 | Firefox | 8.8 High | Preflight Cache Poisoning | Credential bypass | Cached preflight responses incorrectly applied to credentialed requests |
 
 ### Attack Trend Analysis (2024-2025)
 

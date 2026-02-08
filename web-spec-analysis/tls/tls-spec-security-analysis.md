@@ -100,7 +100,7 @@ RFC 8446 §4.1.3 mandates downgrade protection:
 *TLS 1.3 clients MUST verify these values are not present when receiving older protocol versions, aborting with an 'illegal_parameter' alert if detected."*
 
 **Real Cases**:
-- NCG Group disclosed downgrade vulnerabilities in TLS libraries (2024)
+- NCG Group disclosed downgrade vulnerabilities in TLS libraries (2019)
 - Affects implementations that prioritize compatibility over strict validation
 
 ---
@@ -297,7 +297,7 @@ CBC padding validation timing differs depending on padding length:
 RFC 5246 §6.2.3.2: *"Implementations MUST ensure that record processing time is essentially the same whether or not the padding is correct."*
 
 **Real Cases**:
-- Craig Young (2024) discovered **new POODLE variants in TLS 1.2** due to continued CBC support
+- Craig Young (2019) discovered **new POODLE variants in TLS 1.2** due to continued CBC support
 - TLS 1.2 CBC cipher suites remain vulnerable to Lucky 13 if constant-time validation is not implemented
 
 **Spec-Based Defense**:
@@ -620,8 +620,8 @@ RFC 7525 reinforces:
 - **Impact**: Memory exhaustion DoS
 - **Mechanism**: Session cache grows without bounds under specific conditions
 
-**Multi-Library Cache Attacks (2024)**:
-Research paper "The 9 Lives of Bleichenbacher's CAT: New Cache ATtacks on TLS Implementations" and "Pseudo Constant Time Implementations of TLS Are Only Pseudo Secure" revealed that **seven out of nine TLS implementations** are vulnerable to cache-timing attacks:
+**Multi-Library Cache Attacks**:
+Research papers "The 9 Lives of Bleichenbacher's CAT: New Cache ATtacks on TLS Implementations" (2019) and "Pseudo Constant Time Implementations of TLS Are Only Pseudo Secure" (2018) revealed that **seven out of nine TLS implementations** are vulnerable to cache-timing attacks:
 - **Vulnerable**: OpenSSL, Amazon s2n, MbedTLS, Apple CoreTLS, Mozilla NSS, WolfSSL, GnuTLS
 - **Not vulnerable**: BearSSL, Google BoringSSL (fully constant-time implementations)
 
@@ -942,7 +942,7 @@ Attackers could potentially:
 | **CVE-2024-9143** | High | EC Parameter Validation | Out-of-Bounds Access | Memory Corruption, RCE | Patched (2024) |
 | **CVE-2024-2511** | High | TLS 1.3 Session Handling | Unbounded Memory Growth | Denial of Service | Patched (2024) |
 | **CVE-2020-1968** | Moderate | Raccoon (DH Timing) | Timing Oracle | Session Key Recovery | Fixed in TLS 1.3 |
-| **CVE-2017-6168** | High | ROBOT (Bleichenbacher) | RSA Padding Oracle | Session Decryption | Disable RSA key exchange |
+| **ROBOT Attack** | High | ROBOT (Bleichenbacher) | RSA Padding Oracle | Session Decryption | Disable RSA key exchange (TLS 1.3) |
 | **CVE-2016-0800** | High | DROWN (SSLv2 Cross-Protocol) | Bleichenbacher Oracle | TLS Session Decryption | Disable SSLv2 |
 | **CVE-2015-7575** | Moderate | SLOTH (Weak Hash Downgrade) | Signature Forgery | Client Auth Bypass | Disable MD5/SHA1 signatures |
 | **CVE-2014-3566** | High | POODLE (SSL 3.0 CBC) | Padding Oracle | Plaintext Recovery | Disable SSL 3.0 |

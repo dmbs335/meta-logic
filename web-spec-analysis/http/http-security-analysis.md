@@ -202,8 +202,8 @@ The specification defines clear precedence rules but acknowledges that implement
 - **TE.TE Obfuscation**: Both support Transfer-Encoding but attacker obfuscates the header so one server ignores it.
 
 **Real-World Examples**:
-- **Apache mod_proxy smuggling** (CVE-2020-11993): RewriteRule patterns combined with mod_proxy allowed smuggling attacks.
-- **Apache Tomcat HTTP/2** (CVE-2024-24549): Incorrect recycling of HTTP/2 request/response objects led to request mixing.
+- **Apache mod_http2 logging** (CVE-2020-11993): HTTP/2 module logging on wrong connection caused memory corruption (not smuggling).
+- **Apache Tomcat HTTP/2** (CVE-2024-24549): HTTP/2 stream not reset until after all headers processed, allowing DoS via excessive headers.
 - Thousands of vulnerable configurations identified by PortSwigger's 2019 research.
 
 **Spec-Based Defense**:
@@ -502,7 +502,7 @@ Both endpoints support Transfer-Encoding but one ignores obfuscated variant.
 **CVE Examples**:
 - CVE-2025-32094: Obsolete line folding + OPTIONS method
 - CVE-2023-25690: Apache mod_proxy encoding issues
-- CVE-2020-11993: Apache mod_proxy with RewriteRule
+- CVE-2020-11993: Apache mod_http2 logging memory corruption
 
 **Specification Gap**:
 RFC 9112 acknowledges the threat: *"Such a message might indicate an attempt to perform request smuggling and ought to be handled as an error."*
@@ -1388,21 +1388,26 @@ Encoding problems in mod_proxy allowed request URLs with incorrect encoding to b
 
 ---
 
-### CVE-2024-24549: Apache Tomcat HTTP/2 Request Mix-Up
+### CVE-2024-24549: Apache Tomcat HTTP/2 Header Handling DoS
 
-**Affected**: Apache Tomcat with HTTP/2
+**Affected**: Apache Tomcat 11.0.0-M1 through 11.0.0-M16, 10.1.0-M1 through 10.1.18, 9.0.0-M1 through 9.0.85, 8.5.0 through 8.5.98
+**Severity**: Important
 **Specification Connection**: RFC 9113 §8 (HTTP/2 streams)
 
 **Attack Mechanism**:
-Incorrect recycling of request and response objects used by HTTP/2 requests led to request/response mix-up between users.
+When processing an HTTP/2 request that exceeded any of the configured limits for headers, the associated HTTP/2 stream was not reset until after all of the headers had been processed. This allows an attacker to cause Denial of Service by sending requests with excessive headers.
 
-**RFC Gap**: RFC 9113 mandates stream isolation but doesn't specify implementation details for object lifecycle management, allowing this implementation bug.
+**Impact**: Denial of Service (not request/response mix-up)
+
+**Defense**: Upgrade to Apache Tomcat version 11.0.0-M17, 10.1.19, 9.0.86 or 8.5.99
+
+**RFC Gap**: RFC 9113 §6.5.2 defines header size limits but doesn't mandate when to reset streams, allowing delayed reset behavior that enables DoS.
 
 ---
 
-### MadeYouReset: HTTP/2 DoS via Rapid RST_STREAM
+### MadeYouReset (CVE-2025-8671): HTTP/2 DoS via Rapid RST_STREAM
 
-**Year**: 2025
+**Year**: 2025 (disclosed August 13, 2025)
 **Specification Connection**: RFC 9113 §5.4 (RST_STREAM)
 
 **Attack Mechanism**:
@@ -1458,23 +1463,29 @@ RFC 9112 §7.1 defines chunk-size as 1*HEXDIG but doesn't mandate maximum size o
 
 ---
 
-### CVE-2020-11993: Apache mod_proxy Request Smuggling
+### CVE-2020-11993: Apache HTTP/2 Module Logging Memory Corruption
 
 **Year**: 2020
-**Affected**: Apache HTTP Server 2.4.0-2.4.55 with mod_proxy
-**Specification Connection**: RFC 9112 §6.3
+**Affected**: Apache HTTP Server 2.4.20 through 2.4.43 (mod_http2)
+**Severity**: Moderate
+**Specification Connection**: RFC 9113 (HTTP/2)
 
 **Attack Mechanism**:
-Specific mod_proxy configurations with RewriteRule patterns allow HTTP request smuggling when mod_proxy and mod_rewrite are enabled together. Certain RewriteRule patterns don't properly sanitize incoming requests before forwarding.
+When trace/debug was enabled for the HTTP/2 module (mod_http2), on certain traffic edge patterns, logging statements were made on the wrong connection, causing concurrent use of memory pools. This is NOT a request smuggling vulnerability.
 
 **Exploitation**:
-Attacker crafts requests with ambiguous Content-Length/Transfer-Encoding that bypass mod_rewrite validation but cause smuggling at back-end.
+1. Attacker sends specially crafted HTTP/2 traffic patterns
+2. If trace/debug logging is enabled for mod_http2, logging occurs on incorrect connection
+3. Concurrent memory pool access causes memory corruption
 
-**RFC Gap**: RFC doesn't provide guidance for proxy modules that perform URL rewriting before forwarding, creating security gaps in the rewrite→forward pipeline.
+**Impact**: Memory corruption, potential DoS
 
-**Impact**: Authentication bypass, access control circumvention, cache poisoning
+**Mitigation**:
+- Configure LogLevel of mod_http2 above "info" level
+- Upgrade to Apache 2.4.44 or later
+- Disable trace/debug logging in production
 
-**Mitigation**: Upgrade to Apache 2.4.56+, carefully audit RewriteRule patterns, disable mod_proxy if not needed
+**Note**: This is a mod_http2 logging issue, NOT a mod_proxy vulnerability. The vulnerability only affects systems with debug/trace logging enabled.
 
 ---
 

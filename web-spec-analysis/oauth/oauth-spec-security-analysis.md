@@ -2,7 +2,7 @@
 
 > **Analysis Target**: RFC 6749, RFC 6750, RFC 7636 (PKCE), RFC 9700 (Security BCP), OAuth 2.1 Draft
 > **Methodology**: Specification-first analysis mapping attack vectors to RFC requirements
-> **Latest Research Reflected**: January 2025 (USENIX Security '25, RFC 9700, CVE-2024-10318)
+> **Latest Research Reflected**: August 2025 (USENIX Security '25, RFC 9700, Salesloft-Drift breach)
 > **Language**: English
 
 ---
@@ -851,6 +851,7 @@ Resource Server Rejects:
 | CVE | Component | Vulnerability | Impact | Status |
 |-----|-----------|---------------|--------|--------|
 | **CVE-2024-10318** | NGINX OpenID Connect | Session fixation via missing nonce validation | ID token replay, account takeover | Fixed Nov 2024 |
+| **CVE-2023-36019** | Microsoft Azure AD / Entra ID | OAuth token validation bypass | Privilege escalation, tenant takeover | CVSS 9.6, Patched 2023 |
 | **COAT/CORF** | Integration Platforms (11/18 tested) | Cross-app authorization code misuse | Account takeover, data exfiltration | CVSS 9.6 |
 | **Device Flow Campaign** | Microsoft 365, Google Workspace | Phishing via OAuth device authorization | MFA bypass, enterprise compromise | Ongoing 2024-2025 |
 | **Salesloft-Drift Breach** | OAuth Token Storage | Bearer token theft and replay | 700+ organizations compromised | August 2025 |
