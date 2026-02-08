@@ -135,7 +135,7 @@ Source implementation in Zend Engine:
 **Security Implications**:
 - **Mass Assignment**: Overwrite arbitrary variables including security flags
 - **Logic Bypass**: Inject variables that shouldn't be user-controlled
-- **Memory Corruption** (CVE-2024-8926): Use-after-free when destructors unset variables during extraction
+- **Memory Corruption** (GHSA-4pwq-3fv3-gm94): Use-after-free when destructors unset variables during extraction
 
 **Attack Vectors**:
 
@@ -150,7 +150,7 @@ if ($is_admin) { // $is_admin now true!
 }
 ```
 
-2. **extract() Memory Corruption (CVE-2024-8926, SSD Advisory)**:
+2. **extract() Memory Corruption (GHSA-4pwq-3fv3-gm94, SSD Advisory)**:
 ```php
 // VULNERABLE - Use-after-free with EXTR_REFS
 class Evil {
@@ -1502,7 +1502,7 @@ session.use_only_cookies = 1
 | CVE | Year | CVSS | Root Cause | Affected Versions | Meta-Pattern |
 |-----|------|------|------------|-------------------|--------------|
 | CVE-2024-4577 | 2024 | 9.8 | CGI argument injection via Windows character encoding | All PHP < 8.1.29, 8.2.20, 8.3.8 (Windows) | CGI Argument Injection |
-| CVE-2024-8926 | 2024 | 8.8 | extract() use-after-free with EXTR_REFS | PHP 5.x/7.x/8.x | Implicit Variable Registration |
+| GHSA-4pwq-3fv3-gm94 | 2024 | 8.8 | extract() use-after-free with EXTR_REFS | PHP 5.x/7.x/8.x | Implicit Variable Registration |
 | CVE-2025-49113 | 2025 | 9.1 | Roundcube deserialization RCE (10-year-old bug) | Roundcube 1.1.0-1.6.10 | Serialization as Data Format |
 | CVE-2022-31160 | 2022 | 7.5 | Weak PRNG in token generation | Application-level (jsPDF) | Weak PRNG (similar pattern) |
 | CVE-2012-1823 | 2012 | 10.0 | PHP-CGI query string argument injection | PHP < 5.3.12, 5.4.2 | CGI Argument Injection |

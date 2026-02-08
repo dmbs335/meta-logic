@@ -2,7 +2,9 @@
 
 > **Analysis Target**: WHATWG Fetch Standard, RFC 6454 (Web Origin Concept)
 > **Methodology**: Systematic extraction of security implications from specification text, cross-referenced with CVE database, security research papers, and real-world attack techniques (2024-2025)
-> **Latest Cases Reflected**: CVE-2024-25124 (Fiber), CVE-2024-8183 (Prefect), CVE-2025-5320 (Gradio), PortSwigger CORS research, PT SWARM tracking protection bypass
+> **Latest Cases Reflected**: CVE-2024-25124 (Fiber), CVE-2024-8183 (Prefect), CVE-2024-1681 (Flask-CORS), CVE-2025-5320 (Gradio), CVE-2025-57755 (Claude Code Router), PortSwigger CORS research, PT SWARM tracking protection bypass
+>
+> **Note**: CVSS scores reported in their published versions (v3.1 or v4.0). Chrome's Private Network Access (PNA) enforcement, originally planned for Chrome 130, is currently on hold as of 2025.
 
 ---
 
@@ -510,8 +512,10 @@ fetch('http://192.168.1.1/admin', {
 });
 ```
 
-**New PNA Protection Mechanism**:
-Chrome (v130+) requires an additional preflight header:
+**PNA Protection Mechanism (Currently On Hold)**:
+Chrome originally planned to enforce Private Network Access (PNA) preflights in version 130, but **this rollout is currently on hold** due to compatibility issues. As of 2025, PNA remains in warning-only mode. Chrome is now developing "Local Network Access" with a permission prompt, planned for Chrome 142.
+
+The intended PNA preflight mechanism:
 ```http
 # Browser sends new PNA preflight
 OPTIONS /admin HTTP/1.1
@@ -525,28 +529,31 @@ Access-Control-Allow-Origin: https://public-site.com
 ```
 
 **Security Gaps**:
+- **Enforcement Delayed**: PNA enforcement is on hold, so the security risks remain—public websites can still attack internal network resources if those resources have permissive CORS
 - **Legacy Device Risk**: Most routers, IoT devices, and internal services do not implement PNA headers
-- **Browser Support**: PNA is Chrome-only as of 2025; Firefox and Safari have not implemented it
-- **Deprecation Trial**: Chrome offers a temporary override for compatibility, weakening protection
+- **Browser Support**: PNA is Chrome-only; Firefox and Safari have not implemented it
+- **Deprecation Trial**: Chrome's non-secure context deprecation trial ends with Chrome 132 (February 2025)
 
 **Real-World Cases**:
-- Chrome blog: "These attacks have affected hundreds of thousands of users, allowing attackers to redirect them to malicious servers"
+- Chrome documented these attacks affecting hundreds of thousands of users before PNA development began
 - DNS rebinding attacks combined with CORS have compromised home routers and IoT devices
 - Internal Kubernetes APIs exposed to CORS attacks from public websites
+- As of 2025, PNA enforcement is on hold, so these attacks remain viable against unprotected internal services
 
 **Attack Chain Example**:
 ```
 1. Victim visits attacker.com (public HTTPS site)
 2. JavaScript attempts fetch to 192.168.1.1 (private IP)
-3. Pre-PNA: Request succeeds if router has permissive CORS
-4. Post-PNA: Request blocked unless router sends PNA headers
-5. Attacker uses DNS rebinding as fallback if PNA blocks CORS
+3. Current state (PNA on hold): Request succeeds if router has permissive CORS
+4. Intended PNA protection: Request would be blocked unless router sends PNA headers
+5. Attacker can use DNS rebinding as alternative attack vector
 ```
 
 **Spec-Based Defense**:
 - **Internal services should not enable CORS** from public origins
 - Implement authentication even on internal networks (defense-in-depth)
 - Use network segmentation to isolate sensitive internal resources
+- Prepare for future PNA implementation by testing with Chrome's warnings
 - WICG PNA Spec: *"For navigation requests: Access-Control-Allow-Origin cannot be a wildcard ('*'). Access-Control-Allow-Credentials must be set to 'true'."*
 - Consider firewall rules blocking RFC 1918 addresses from public traffic
 
@@ -577,13 +584,14 @@ fetch('https://api.example.com/sensitive', {
 }).then(data => exfiltrate(data));
 ```
 
-**B. Chrome's 2-Minute Grace Period**:
-Chrome sends SameSite=Lax cookies in POST requests if the cookie was set within the last 2 minutes:
+**B. Chrome's "Lax+POST" Compatibility Feature**:
+Chrome includes a 2-minute grace period where newly-set SameSite=Lax cookies are sent on POST requests. This "Lax+POST" exception is an **intentional compatibility feature** (not a vulnerability) to support legacy login flows:
 ```javascript
-// Attacker sets up timing attack
-// 1. Trick victim into action that sets fresh cookie
-// 2. Immediately trigger CORS POST with credentials
-// 3. Cookie is sent despite Lax restriction
+// Developers should not rely on this behavior:
+// 1. Fresh cookie (< 2 minutes old) is sent in cross-site POST
+// 2. This is a transition mechanism, not a security feature
+// 3. Explicitly set SameSite=None; Secure if cross-site POST needed
+// 4. Chrome plans to remove this exception in future versions
 ```
 
 **C. Client-Side Redirect Gadget**:
@@ -691,14 +699,16 @@ performance.getEntriesByType('resource').forEach(entry => {
 
 ### Comprehensive CVE Analysis
 
-| CVE ID | Product | CVSS Score | Vulnerability Type | Impact | Root Cause |
-|--------|---------|------------|-------------------|--------|------------|
-| CVE-2024-25124 | Go Fiber v2 | 7.5 High | Wildcard with Credentials | Unauthorized data access | Framework allowed `Access-Control-Allow-Origin: *` with `Access-Control-Allow-Credentials: true` |
-| CVE-2024-8183 | Prefect 2.20.2 | 6.5 Medium | Origin Reflection | Data leak, loss of confidentiality | CORS misconfiguration allows unauthorized domains to access sensitive database data |
-| CVE-2024-1681 | Flask-CORS | 4.3 Medium | Log Injection | Log corruption, forensic evasion | CRLF injection via Origin header when debug logging enabled |
-| CVE-2025-5320 | Gradio ≤5.29.1 | 7.4 High | Origin Validation Error | Unauthorized access | `is_valid_origin` function in CORS Handler incorrectly validates localhost aliases |
-| CVE-2025-57755 | Claude Code Router | 7.1 High | Improper CORS Config | Credential exposure | Permissive CORS configuration potentially exposes user credentials |
-| CVE-2015-4520 | Firefox | 8.8 High | Preflight Cache Poisoning | Credential bypass | Cached preflight responses incorrectly applied to credentialed requests |
+| CVE ID | Product | CVSS v3.1 | CVSS v4.0 | Vulnerability Type | Impact | Root Cause |
+|--------|---------|-----------|-----------|-------------------|--------|------------|
+| CVE-2024-25124 | Go Fiber v2 | 9.4 Critical | 7.5 High | Wildcard with Credentials | Unauthorized data access | Framework allowed `Access-Control-Allow-Origin: *` with `Access-Control-Allow-Credentials: true` |
+| CVE-2024-8183 | Prefect 2.20.2 | - | 6.5 Medium | Origin Reflection | Data leak, loss of confidentiality | CORS misconfiguration allows unauthorized domains to access sensitive database data |
+| CVE-2024-1681 | Flask-CORS | - | 4.3 Medium | Log Injection | Log corruption, forensic evasion | CRLF injection via Origin header when debug logging enabled |
+| CVE-2025-5320 | Gradio ≤5.29.1 | - | 6.3 Medium | Origin Validation Error | Unauthorized access | `is_valid_origin` function incorrectly validates localhost aliases and IPv6 mappings |
+| CVE-2025-57755 | Claude Code Router <1.0.34 | - | 8.1 High | Improper CORS Config | Credential exposure | Permissive CORS configuration potentially exposes user API keys |
+| CVE-2015-4520 | Firefox <41.0 | - | 8.8 High | Preflight Cache Poisoning | Credential bypass | Cached preflight responses incorrectly applied to credentialed requests |
+
+*Note: CVSS scores are reported in their published versions. Version 4.0 scores are generally lower for the same severity due to updated methodology.*
 
 ### Attack Trend Analysis (2024-2025)
 

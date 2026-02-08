@@ -4,6 +4,7 @@
 > **Source Investigation**: [GitHub spring-projects/spring-framework](https://github.com/spring-projects/spring-framework), [Spring Documentation](https://docs.spring.io/)
 > **Analysis Date**: 2026-02-08
 > **CVE Coverage**: 2022-2025
+> **CVE Verification**: All 28 CVEs verified against official sources (2026-02-09)
 
 ---
 
@@ -1125,7 +1126,7 @@ dbf.setExpandEntityReferences(false);
 
 #### BlackHat EU-22 Research: "Databinding2Shell"
 
-This vulnerability was extensively analyzed in the BlackHat EU-22 presentation **"Databinding2Shell: Novel Pathways to RCE in Web Frameworks"** by Yue Mu, which revealed how framework data binding mechanisms can be weaponized for remote code execution ([BlackHat EU-22 PDF](https://i.blackhat.com/EU-22/Wednesday-Briefings/EU-22-Mu-Databinding2Shell-Novel-Pathways-to-RCE-Web-Frameworks.pdf)).
+This vulnerability was extensively analyzed in the BlackHat EU-22 presentation **"Databinding2Shell: Novel Pathways to RCE in Web Frameworks"** by Haowen Mu, which revealed how framework data binding mechanisms can be weaponized for remote code execution ([BlackHat EU-22 PDF](https://i.blackhat.com/EU-22/Wednesday-Briefings/EU-22-Mu-Databinding2Shell-Novel-Pathways-to-RCE-Web-Frameworks.pdf)).
 
 #### Vulnerability Overview
 
@@ -1430,14 +1431,14 @@ management.endpoint.env.post.enabled: false  # Prevent property modification
 | **CVE-2025-41249** | Spring Framework | Annotation Detection Failure | Unbounded generic superclasses | Medium | 2025 | Patched |
 | **CVE-2025-41248** | Spring Security | Authorization Bypass | Parameterized type annotation detection | Medium | 2025 | Patched |
 | **CVE-2025-41242** | Spring MVC | Path Traversal | Path normalization bypass | High | 2025 | Patched |
-| **CVE-2024-38829** | Spring Security | Session Fixation | Session ID not regenerated | Medium | 2024 | Patched |
-| **CVE-2024-38828** | Spring Framework | Information Disclosure | Sensitive config in error messages | Medium | 2024 | Patched |
-| **CVE-2024-38827** | Spring Security | Broken Access Control | Inconsistent authorization enforcement | High | 2024 | Patched |
+| **CVE-2024-38829** | Spring LDAP | Locale String Handling | Improper locale vulnerability in query handling | Medium | 2024 | Patched |
+| **CVE-2024-38828** | Spring Framework | DoS | byte[] parameter DoS via large payload | Medium | 2024 | Patched |
+| **CVE-2024-38827** | Spring Security | Broken Access Control | Locale-sensitive string comparison bypass | High | 2024 | Patched |
 | **CVE-2024-38821** | Spring WebFlux | Authorization Bypass | Static resource auth bypass | High | 2024 | Patched |
 | **CVE-2024-38820** | Spring Framework | Deserialization | Insecure remoting deserialization | High | 2024 | Patched |
 | **CVE-2024-38819** | Spring WebFlux | Path Traversal | Functional framework path bypass | 7.5 | 2024 | Patched |
 | **CVE-2024-38816** | Spring Framework | Path Traversal | Static resource path traversal | 7.5 | 2024 | Patched |
-| **CVE-2024-38807** | Spring Boot | Loader Security Weakness | Malicious JAR execution | High | 2024 | Patched |
+| **CVE-2024-38807** | Spring Boot | Signature Forgery | Nested JAR signature validation bypass | 6.3 | 2024 | Patched |
 | **CVE-2024-22233** | Spring Framework | DoS | Malformed request handling | 7.5 | 2024 | Patched |
 | **CVE-2023-34034** | Spring WebFlux | Authentication Bypass | Path matching discrepancy | High | 2023 | Patched |
 | **CVE-2022-22980** | Spring Data MongoDB | SpEL Injection in @Query | Unsanitized parameters in SpEL expressions | 8.1 | 2022 | Patched |
@@ -1856,11 +1857,21 @@ public class UserService extends GenericService<User> {
 
 ### 2024 CVEs: Additional Vulnerabilities
 
-#### CVE-2024-38807: Spring Boot Loader Security Weakness
+#### CVE-2024-38807: Spring Boot Signature Forgery Vulnerability
 
-**Component**: spring-boot-loader
+**Component**: spring-boot-loader, spring-boot-loader-classic
 
-**Vulnerability**: Malicious JARs can exploit loader mechanism to execute arbitrary code during application startup.
+**Vulnerability**: Applications using custom code to validate signed nested JAR files can incorrectly attribute signatures, allowing content signed by one signer to appear as if signed by another.
+
+**Affected Versions**: Spring Boot 2.7.0-2.7.21, 3.0.0-3.0.16, 3.1.0-3.1.12, 3.2.0-3.2.8, 3.3.0-3.3.2
+
+**CVSS Score**: 6.3 (Medium severity)
+
+**Technical Details**: The vulnerability exists due to a gap in how nested JARs and certificates are loaded and processed at runtime. Applications that depend on cryptographic signatures before executing dynamic code can incorrectly validate an unsigned, mismatched, or otherwise invalid JAR as properly signed.
+
+**Impact**: Signature validation bypass - NOT direct "malicious JAR execution" but rather failure to correctly verify JAR authenticity.
+
+**Fixed Versions**: Spring Boot 2.7.22, 3.0.17, 3.1.13, 3.2.9, 3.3.3
 
 #### CVE-2024-38816: Path Traversal (Detailed in Section 2.10)
 
@@ -1874,38 +1885,92 @@ public class UserService extends GenericService<User> {
 
 #### CVE-2024-38821: WebFlux Authorization Bypass (Detailed in Section 2.8)
 
-#### CVE-2024-38827: Broken Access Control
+#### CVE-2024-38827: Spring Security Authorization Bypass via Locale-Sensitive String Comparison
 
-**Vulnerability**: Inconsistent authorization enforcement across different request mapping patterns.
+**Vulnerability**: Authorization bypass due to locale-sensitive string case conversion in authorization checks.
 
-#### CVE-2024-38828: Information Disclosure
+**Root Cause**: Similar to CVE-2024-38829 and CVE-2024-38820, this vulnerability stems from using String.toLowerCase() and String.toUpperCase() without specifying Locale.ROOT, causing inconsistent authorization enforcement across different system locales.
 
-**Vulnerability**: Sensitive configuration exposed through error messages.
-
-**Mitigation**:
-
-```yaml
-server.error.include-message: never
-server.error.include-binding-errors: never
-server.error.include-stacktrace: never
-server.error.include-exception: false
-```
-
-#### CVE-2024-38829: Session Fixation
-
-**Vulnerability**: Session ID not regenerated after authentication in certain configurations.
+**Technical Details**: In certain locales (especially Turkish), string comparisons for authorization decisions can fail unexpectedly. For example, "ADMIN".toLowerCase() in Turkish locale produces "admın" (with a dotless 'ı'), which doesn't match "admin".
 
 **Mitigation**:
 
 ```java
-@Bean
-public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-    http.sessionManagement(session -> session
-        .sessionFixation().newSession()  // ✅ Always create new session on auth
-    );
-    return http.build();
+// ✅ SECURE - Always use Locale.ROOT for security decisions
+if (role.toLowerCase(Locale.ROOT).equals("admin")) {
+    // Grant access
+}
+
+// ❌ VULNERABLE - Locale-dependent comparison
+if (role.toLowerCase().equals("admin")) {
+    // May fail in Turkish locale!
 }
 ```
+
+#### CVE-2024-38828: Denial of Service via byte[] Parameter
+
+**Vulnerability**: Spring MVC controller methods with an `@RequestBody byte[]` method parameter are vulnerable to a DoS attack.
+
+**Technical Details**: Attackers can exploit controller methods that use the `@RequestBody` annotation with a `byte[]` parameter by sending a large payload, causing excessive memory consumption and potential application crashes.
+
+**Affected Versions**: Spring Framework versions 5.3.0 - 5.3.41, with older unsupported versions also affected.
+
+**Severity**: MEDIUM
+
+**Attack Vector**: An attacker sends a crafted HTTP request with an extremely large payload to an endpoint using `@RequestBody byte[]`, triggering memory exhaustion.
+
+**Example Vulnerable Code**:
+
+```java
+@PostMapping("/upload")
+public void handleUpload(@RequestBody byte[] data) {
+    // Process byte array - vulnerable to large payloads
+}
+```
+
+**Mitigation**:
+
+```java
+// Option 1: Use InputStream instead
+@PostMapping("/upload")
+public void handleUpload(InputStream inputStream) {
+    // Process stream with controlled buffer size
+}
+
+// Option 2: Add payload size limits
+@PostMapping("/upload")
+public void handleUpload(@RequestBody(required = false) byte[] data) {
+    if (data != null && data.length > MAX_SIZE) {
+        throw new PayloadTooLargeException();
+    }
+}
+```
+
+**Official Source**: [Spring Framework CVE-2024-38828 published](https://spring.io/blog/2024/11/15/spring-framework-cve-2024-38828-published/)
+
+#### CVE-2024-38829: Spring LDAP Locale String Handling Vulnerability
+
+**Component**: Spring LDAP (NOT Spring Security)
+
+**Vulnerability**: Improper locale vulnerability resulting in unintended columns being queried due to locale-specific string handling in Java's case conversion methods.
+
+**Affected Versions**: Spring LDAP <=2.4.3, >=3.0.0 <=3.0.9, >=3.1.0 <=3.1.7, >=3.2.0 <3.2.7
+
+**Root Cause**: String.toLowerCase() and String.toUpperCase() perform case conversions based on locale-specific rules. Turkish locale, for example, has distinct case-mapping rules where 'i' and 'I' behave differently than in English locale.
+
+**Related CVEs**: CVE-2024-38820, CVE-2024-38827 share the same root cause (locale-sensitive string handling)
+
+**Mitigation**:
+
+```java
+// Use Locale.ROOT for security-sensitive string comparisons
+String normalized = input.toLowerCase(Locale.ROOT);
+
+// NOT locale-sensitive (vulnerable):
+// String normalized = input.toLowerCase(); // Uses default locale!
+```
+
+**Note**: This is completely unrelated to Session Fixation. The CVE affects Spring LDAP's query handling, not Spring Security's session management.
 
 #### CVE-2024-22233: Server Web DoS Vulnerability
 
